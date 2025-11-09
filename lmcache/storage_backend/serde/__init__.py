@@ -24,6 +24,8 @@ from lmcache.storage_backend.serde.serde import (
     Serializer,
     SerializerDebugWrapper,
 )
+from lmcache.storage_backend.serde.svd_decoder import SvdXKVDeserializer
+from lmcache.storage_backend.serde.svd_encoder import SvdXKVSerializer
 from lmcache.storage_backend.serde.torch_serde import (
     TorchDeserializer,
     TorchSerializer,
@@ -47,6 +49,11 @@ def CreateSerde(
             CacheGenSerializer(config, metadata),
             CacheGenDeserializer(config, metadata, metadata.kv_dtype),
         )
+    elif serde_type == "svd":
+        s, d = (
+            SvdXKVSerializer(config, metadata),
+            SvdXKVDeserializer(config, metadata, metadata.kv_dtype),
+        )
     elif serde_type == "fast":
         s, d = FastSerializer(), FastDeserializer(metadata.kv_dtype)
     else:
@@ -65,5 +72,7 @@ __all__ = [
     "TorchDeserializer",
     "CacheGenDeserializer",
     "CacheGenSerializer",
+    "SvdXKVSerializer",
+    "SvdXKVDeserializer",
     "CreateSerde",
 ]
