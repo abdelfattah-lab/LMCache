@@ -42,9 +42,9 @@ def _unpack_npz(byte_array: bytes):
     return meta, A_k, B_k, A_v, B_v
 
 
-class SvdXKVDeserializer(Deserializer):
+class SvdDeserializer(Deserializer):
     """
-    Cross-layer SVD deserializer for LMCache v1.
+    Single-layer SVD deserializer for LMCache v1.
     Reconstructs full-precision KV chunk in KV_2LTD format: [2, L, T, hidden].
     """
 
@@ -107,3 +107,4 @@ class SvdXKVDeserializer(Deserializer):
             f"dtype={kv_chunk.dtype}, rank={rank}"
         )
         return memory_obj
+    

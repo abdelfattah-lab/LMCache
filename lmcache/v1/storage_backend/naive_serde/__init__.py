@@ -7,8 +7,8 @@ from lmcache.config import LMCacheEngineMetadata
 from lmcache.v1.config import LMCacheEngineConfig
 from lmcache.v1.storage_backend.naive_serde.cachegen_decoder import CacheGenDeserializer
 from lmcache.v1.storage_backend.naive_serde.cachegen_encoder import CacheGenSerializer
-from lmcache.v1.storage_backend.naive_serde.svd_decoder import SvdXKVDeserializer
-from lmcache.v1.storage_backend.naive_serde.svd_encoder import SvdXKVSerializer
+from lmcache.v1.storage_backend.naive_serde.svd_decoder import SvdDeserializer
+from lmcache.v1.storage_backend.naive_serde.svd_encoder import SvdSerializer
 from lmcache.v1.storage_backend.naive_serde.kivi_serde import (
     KIVIDeserializer,
     KIVISerializer,
@@ -38,8 +38,8 @@ def CreateSerde(
             CacheGenDeserializer(config, metadata),
         )
     elif serde_type == "svd":
-        s, d = (SvdXKVSerializer(config, metadata), 
-                SvdXKVDeserializer(config, metadata),
+        s, d = (SvdSerializer(config, metadata), 
+                SvdDeserializer(config, metadata),
         )
     else:
         raise ValueError(f"Invalid type: {serde_type}")

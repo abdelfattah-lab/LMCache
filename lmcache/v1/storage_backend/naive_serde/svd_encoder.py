@@ -37,9 +37,9 @@ def _pack_tensors_to_bytes(tensors: dict) -> bytes:
     np.savez_compressed(buf, **{k: v.cpu().numpy() for k, v in tensors.items()})
     return buf.getvalue()
 
-class SvdXKVSerializer(Serializer):
+class SvdSerializer(Serializer):
     """
-    Cross-layer SVD serializer for LMCache v1 (uses MemoryObj API).
+    Single-layer SVD serializer for LMCache v1 (uses MemoryObj API).
     """
 
     def __init__(self, config: LMCacheEngineConfig, metadata: LMCacheEngineMetadata):
@@ -99,3 +99,4 @@ class SvdXKVSerializer(Serializer):
         )
 
         return BytesBufferMemoryObj(payload)
+    
