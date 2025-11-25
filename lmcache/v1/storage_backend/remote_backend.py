@@ -217,7 +217,13 @@ class RemoteBackend(StorageBackendInterface):
         with self.lock:
             self.put_tasks.add(key)
 
-        compressed_memory_obj = self.serializer.serialize(memory_obj)
+        # Extract layer_id from key if it's a LayerCacheEngineKey
+        layer_id = None
+        from lmcache.utils import LayerCacheEngineKey
+        if isinstance(key, LayerCacheEngineKey):
+            layer_id = key.layer_id
+
+        compressed_memory_obj = self.serializer.serialize(memory_obj, layer_id=layer_id)
         memory_obj.ref_count_down()
 
         # NOTE: No need to do error handling here
@@ -253,9 +259,14 @@ class RemoteBackend(StorageBackendInterface):
 
             compressed_memory_objs = []
 
-            for memory_obj in memory_objs:
+            for key, memory_obj in zip(keys, memory_objs, strict=False):
                 memory_obj.ref_count_up()
-                compressed_memory_objs.append(self.serializer.serialize(memory_obj))
+                # Extract layer_id from key if it's a LayerCacheEngineKey
+                layer_id = None
+                from lmcache.utils import LayerCacheEngineKey
+                if isinstance(key, LayerCacheEngineKey):
+                    layer_id = key.layer_id
+                compressed_memory_objs.append(self.serializer.serialize(memory_obj, layer_id=layer_id))
                 memory_obj.ref_count_down()
 
             future = asyncio.run_coroutine_threadsafe(

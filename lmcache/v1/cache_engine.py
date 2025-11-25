@@ -941,9 +941,14 @@ class LMCacheEngine:
         )
 
         compressed_memory_objs = []
-        for memory_obj in memory_objs:
+        for key, memory_obj in zip(keys, memory_objs, strict=False):
             assert memory_obj is not None
-            compressed_memory_obj = serializer.serialize(memory_obj)
+            # Extract layer_id from key if it's a LayerCacheEngineKey
+            layer_id = None
+            from lmcache.utils import LayerCacheEngineKey
+            if isinstance(key, LayerCacheEngineKey):
+                layer_id = key.layer_id
+            compressed_memory_obj = serializer.serialize(memory_obj, layer_id=layer_id)
             memory_obj.unpin()
             compressed_memory_objs.append(compressed_memory_obj)
 

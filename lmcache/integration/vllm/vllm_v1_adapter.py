@@ -1156,7 +1156,20 @@ class LMCacheConnectorV1Impl:
 
         if self.use_layerwise:
             for layerwise_storer in self.layerwise_storers:
-                next(layerwise_storer)
+                try:
+                    next(layerwise_storer)
+                except (StopIteration, RuntimeError) as e:
+                    # Generator is exhausted, which means all layers have been processed
+                    # In Python 3.7+, StopIteration from generators is converted to RuntimeError
+                    # This can happen if save_kv_layer was called more times than expected
+                    # or if the generator yielded fewer times than expected
+                    if isinstance(e, RuntimeError) and "generator raised StopIteration" not in str(e):
+                        # Re-raise if it's a different RuntimeError
+                        raise
+                    logger.debug(
+                        "Layerwise storer generator exhausted in wait_for_save. "
+                        "This is expected if all layers have been processed."
+                    )
 
             # unpin the kv caches according to req_id
             for request in connector_metadata.requests:
@@ -1205,16 +1218,31 @@ class LMCacheConnectorV1Impl:
             store_mask = torch.ones(len(token_ids), dtype=torch.bool)
             store_mask[:skip_leading_tokens] = False
 
-            logger.info(
-                "Storing KV cache for %d out of %d tokens "
-                "(skip_leading_tokens=%d) for request %s",
-                len(token_ids) - skip_leading_tokens,
-                len(token_ids),
-                skip_leading_tokens,
-                request.req_id,
-            )
-
+            tokens_to_store = len(token_ids) - skip_leading_tokens
+            cumulative_tokens = len(token_ids)
             is_last_prefill = request.is_last_prefill
+            
+            # Make log message clearer: show chunk size and indicate if incremental
+            # The "cumulative tokens" represents tokens processed so far during chunked prefill
+            if is_last_prefill:
+                logger.info(
+                    "Storing KV cache: %d tokens (chunk size) out of %d total tokens "
+                    "(skip_leading_tokens=%d) for request %s [final chunk]",
+                    tokens_to_store,
+                    cumulative_tokens,
+                    skip_leading_tokens,
+                    request.req_id,
+                )
+            else:
+                logger.info(
+                    "Storing KV cache: %d tokens (chunk size), cumulative: %d tokens "
+                    "(skip_leading_tokens=%d) for request %s [incremental]",
+                    tokens_to_store,
+                    cumulative_tokens,
+                    skip_leading_tokens,
+                    request.req_id,
+                )
+            
             if is_last_prefill:
                 if request.disagg_spec:
                     request.disagg_spec.is_last_prefill = True

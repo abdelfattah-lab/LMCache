@@ -289,17 +289,82 @@ def encode_function(
     num_heads, head_size = kv.shape[-2:]
     fp_k, fp_v = _split_kv(kv)
     nchannels = num_heads * head_size
-    nlayers = fp_k.shape[0] + fp_v.shape[0]
-
-    new_key, max_tensors_key = torch_quant_vectorized(key_bins, fp_k)
-    new_value, max_tensors_value = torch_quant_vectorized(value_bins, fp_v)
-    encode_input = torch.cat((new_key, new_value), dim=0).reshape(
-        nlayers, chunk_size, nchannels
+    # nlayers calculation: fp_k and fp_v both have shape [num_layers, num_tokens, nchannels]
+    # After concatenating along dim=0, we get [num_layers * 2, num_tokens, nchannels]
+    # So nlayers should be num_layers * 2, which equals fp_k.shape[0] + fp_v.shape[0]
+    num_layers = kv.shape[0]  # Number of layers from input tensor [num_layers, 2, ...]
+    nlayers = num_layers * 2  # Total layers after concatenating K and V
+    
+    # Validate that fp_k and fp_v have the expected number of layers
+    assert fp_k.shape[0] == num_layers, (
+        f"fp_k.shape[0] ({fp_k.shape[0]}) != num_layers ({num_layers})"
+    )
+    assert fp_v.shape[0] == num_layers, (
+        f"fp_v.shape[0] ({fp_v.shape[0]}) != num_layers ({num_layers})"
     )
 
-    new_cdf_key = lmc_ops.calculate_cdf(new_key, int(key_bins.max()))
-    new_cdf_value = lmc_ops.calculate_cdf(new_value, int(value_bins.max()))
-    cdf_int = torch.cat([new_cdf_key, new_cdf_value])
+    # Note: key_bins and value_bins should already be sliced to the correct size
+    # by the serializer before calling encode_function
+    new_key, max_tensors_key = torch_quant_vectorized(key_bins, fp_k)
+    new_value, max_tensors_value = torch_quant_vectorized(value_bins, fp_v)
+    
+    # Concatenate K and V: [num_layers, num_tokens, nchannels] + [num_layers, num_tokens, nchannels]
+    # -> [num_layers * 2, num_tokens, nchannels]
+    # Then reshape to [num_layers * 2, chunk_size, nchannels]
+    encode_input = torch.cat((new_key, new_value), dim=0)
+    
+    # Validate the shape before reshape
+    expected_elements = nlayers * chunk_size * nchannels
+    actual_elements = encode_input.numel()
+    if actual_elements != expected_elements:
+        raise ValueError(
+            f"Shape mismatch in encode_function: "
+            f"Expected {expected_elements} elements (nlayers={nlayers}, chunk_size={chunk_size}, nchannels={nchannels}), "
+            f"but got {actual_elements} elements from tensor with shape {encode_input.shape}. "
+            f"Input kv shape: {kv.shape}, fp_k shape: {fp_k.shape}, fp_v shape: {fp_v.shape}, "
+            f"new_key shape: {new_key.shape}, new_value shape: {new_value.shape}"
+        )
+    
+    encode_input = encode_input.reshape(nlayers, chunk_size, nchannels)
+
+    # For CDF calculation, use the max bins from the provided bins tensor
+    # This ensures we use the correct max for the specific layers being encoded
+    max_key_bins = int(key_bins.max())
+    max_value_bins = int(value_bins.max())
+    
+    new_cdf_key = lmc_ops.calculate_cdf(new_key, max_key_bins)
+    new_cdf_value = lmc_ops.calculate_cdf(new_value, max_value_bins)
+    
+    # CDF tensors have shape [nlayers, nchannels, max_bins + 1]
+    # They need to have the same max_bins to be concatenated
+    # If they have different max_bins, we need to pad the smaller one
+    if new_cdf_key.shape[2] != new_cdf_value.shape[2]:
+        # Pad the smaller CDF to match the larger one
+        max_cdf_size = max(new_cdf_key.shape[2], new_cdf_value.shape[2])
+        if new_cdf_key.shape[2] < max_cdf_size:
+            # Pad new_cdf_key
+            padding = torch.zeros(
+                (new_cdf_key.shape[0], new_cdf_key.shape[1], max_cdf_size - new_cdf_key.shape[2]),
+                dtype=new_cdf_key.dtype,
+                device=new_cdf_key.device
+            )
+            # Fill padding with the last value (max CDF value)
+            last_value = new_cdf_key[:, :, -1:]
+            padding = padding + last_value
+            new_cdf_key = torch.cat([new_cdf_key, padding], dim=2)
+        elif new_cdf_value.shape[2] < max_cdf_size:
+            # Pad new_cdf_value
+            padding = torch.zeros(
+                (new_cdf_value.shape[0], new_cdf_value.shape[1], max_cdf_size - new_cdf_value.shape[2]),
+                dtype=new_cdf_value.dtype,
+                device=new_cdf_value.device
+            )
+            # Fill padding with the last value (max CDF value)
+            last_value = new_cdf_value[:, :, -1:]
+            padding = padding + last_value
+            new_cdf_value = torch.cat([new_cdf_value, padding], dim=2)
+    
+    cdf_int = torch.cat([new_cdf_key, new_cdf_value], dim=0)
 
     output_buffer = torch.zeros(
         (nlayers, nchannels, CGBasics.CACHEGEN_GPU_MAX_TOKENS_PER_CHUNK),
