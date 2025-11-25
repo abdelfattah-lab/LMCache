@@ -12,7 +12,7 @@ from lmcache.logging import init_logger
 from lmcache.observability import LMCStatsMonitor, PrometheusLogger
 from lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
 from lmcache.v1.config import LMCacheEngineConfig
-from lmcache.v1.memory_management import MemoryObj
+from lmcache.v1.memory_management import MemoryFormat, MemoryObj
 from lmcache.v1.storage_backend.abstract_backend import StorageBackendInterface
 from lmcache.v1.storage_backend.connector import CreateConnector
 from lmcache.v1.storage_backend.connector.base_connector import RemoteConnector
@@ -479,10 +479,43 @@ class RemoteBackend(StorageBackendInterface):
         try:
             # warning, this timeout will not actually stop the
             # scheduler from waiting for the result
-            return await asyncio.wait_for(
+            memory_objs = await asyncio.wait_for(
                 self.connection.batched_get_non_blocking(lookup_id, keys),
                 self.blocking_timeout_secs,
             )
+
+            deserialized_memory_objs: List[MemoryObj] = []
+            for i, memory_obj in enumerate(memory_objs):
+                if memory_obj is None:
+                    deserialized_memory_objs.append(None)
+                else:
+                    # Check if the object needs deserialization
+                    from lmcache.v1.memory_management import BytesBufferMemoryObj
+                    if isinstance(memory_obj, BytesBufferMemoryObj) or memory_obj.metadata.fmt == MemoryFormat.BINARY_BUFFER:
+                        # Extract layer_id from LayerCacheEngineKey if present
+                        # Use index to get the corresponding key (memory_objs is a prefix of keys)
+                        key = keys[i] if i < len(keys) else None
+                        layer_id = None
+                        if key is not None:
+                            from lmcache.utils import LayerCacheEngineKey
+                            if isinstance(key, LayerCacheEngineKey):
+                                layer_id = key.layer_id
+                        
+                        logger.info(
+                            f"RemoteBackend.batched_get_non_blocking: Deserializing BINARY_BUFFER object "
+                            f"for key {key}, layer_id={layer_id}, format={memory_obj.metadata.fmt}"
+                        )
+                        deserialized_mem_obj = self.deserializer.deserialize(memory_obj, layer_id=layer_id)
+                        deserialized_memory_objs.append(deserialized_mem_obj)
+                        logger.info(
+                            f"RemoteBackend.batched_get_non_blocking: Deserialized to format={deserialized_mem_obj.metadata.fmt}, "
+                            f"shape={deserialized_mem_obj.tensor.shape if deserialized_mem_obj.tensor is not None else 'None'}"
+                        )
+                    else:
+                        # Already deserialized (TensorMemoryObj), use as-is
+                        deserialized_memory_objs.append(memory_obj)
+            
+            return deserialized_memory_objs
         except asyncio.TimeoutError:
             logger.warning("batched_get_non_blocking timed out")
             return []
