@@ -25,12 +25,14 @@ class Serializer(metaclass=abc.ABCMeta):
 
 class Deserializer(metaclass=abc.ABCMeta):
     @abc.abstractmethod
-    def deserialize(self, memory_obj: MemoryObj) -> MemoryObj:
+    def deserialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
         """
         Deserialize/decompress the memory object.
 
         Input:
             memory_obj: the memory object to be deserialized/decompressed.
+            layer_id: Optional layer ID for layerwise mode. If provided and the decoded data
+                contains multiple layers, only this layer will be extracted.
 
         Returns:
             MemoryObj: the deserialized/decompressed memory object.

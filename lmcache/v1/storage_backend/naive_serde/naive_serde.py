@@ -17,5 +17,5 @@ class NaiveSerializer(Serializer):
 
 
 class NaiveDeserializer(Deserializer):
-    def deserialize(self, memory_obj: MemoryObj) -> MemoryObj:
+    def deserialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
         return memory_obj
