@@ -189,7 +189,70 @@ class LocalCPUBackend(AllocatorBackendInterface):
         with self.cpu_lock:
             for key in keys:
                 mem_obj = self.hot_cache[key]
-                mem_obj.ref_count_up()
+                
+                # For layerwise mode, convert KV_2LTD format to KV_T2D if needed
+                # Objects in hot_cache might have been stored with KV_2LTD format
+                # (from non-layerwise mode or before the format conversion fix)
+                if self.layerwise:
+                    logger.info(
+                        f"LocalCPUBackend.batched_get_non_blocking: RETRIEVING key={key}, "
+                        f"format={mem_obj.metadata.fmt}, shape={mem_obj.tensor.shape if mem_obj.tensor is not None else 'None'}, "
+                        f"layerwise={self.layerwise}"
+                    )
+                    if mem_obj.metadata.fmt == MemoryFormat.KV_2LTD:
+                        # Check if it's a single layer tensor: [2, 1, ntokens, hidden_dim]
+                        if mem_obj.tensor is not None and len(mem_obj.tensor.shape) == 4 and mem_obj.tensor.shape[1] == 1:
+                            # Convert to KV_T2D: [2, 1, ntokens, hidden_dim] -> [2, ntokens, hidden_dim] -> [ntokens, 2, hidden_dim]
+                            logger.info(
+                                f"LocalCPUBackend: Converting format KV_2LTD -> KV_T2D for layerwise mode. "
+                                f"Original shape: {mem_obj.tensor.shape}, key: {key}"
+                            )
+                            converted_tensor = mem_obj.tensor.squeeze(1)  # [2, ntokens, hidden_dim]
+                            converted_tensor = converted_tensor.permute([1, 0, 2])  # [ntokens, 2, hidden_dim]
+                            from lmcache.v1.memory_management import TensorMemoryObj, MemoryObjMetadata
+                            # Increment ref count on original to keep it alive (new wrapper shares tensor data)
+                            mem_obj.ref_count_up()
+                            # Create new object with converted format
+                            mem_obj = TensorMemoryObj(
+                                raw_data=converted_tensor,
+                                metadata=MemoryObjMetadata(
+                                    shape=converted_tensor.shape,
+                                    dtype=converted_tensor.dtype,
+                                    address=mem_obj.metadata.address,
+                                    phy_size=converted_tensor.numel() * converted_tensor.element_size(),
+                                    ref_count=-1,  # HACK: avoid mis-free, same as deserializer
+                                    fmt=MemoryFormat.KV_T2D,
+                                ),
+                                parent_allocator=mem_obj.parent_allocator,
+                            )
+                            logger.info(
+                                f"LocalCPUBackend: Format conversion complete. "
+                                f"New format={MemoryFormat.KV_T2D}, shape={converted_tensor.shape}, key: {key}"
+                            )
+                        else:
+                            # Not a single layer or unexpected shape, increment ref count on original
+                            logger.warning(
+                                f"Layerwise mode: Found KV_2LTD format object with unexpected shape "
+                                f"{mem_obj.tensor.shape if mem_obj.tensor is not None else 'None'}. "
+                                f"Expected [2, 1, ntokens, hidden_dim]. Key: {key}"
+                            )
+                            mem_obj.ref_count_up()
+                    elif mem_obj.metadata.fmt != MemoryFormat.KV_T2D:
+                        # In layerwise mode, we expect KV_T2D format
+                        logger.warning(
+                            f"LocalCPUBackend: Layerwise mode format mismatch! "
+                            f"Found format={mem_obj.metadata.fmt} instead of expected KV_T2D. "
+                            f"Shape: {mem_obj.tensor.shape if mem_obj.tensor is not None else 'None'}. "
+                            f"Key: {key}"
+                        )
+                        mem_obj.ref_count_up()
+                    else:
+                        # Already correct format, increment ref count
+                        mem_obj.ref_count_up()
+                else:
+                    # Not layerwise mode, increment ref count
+                    mem_obj.ref_count_up()
+                
                 mem_objs.append(mem_obj)
         return mem_objs
 
@@ -525,7 +588,21 @@ class LocalCPUBackend(AllocatorBackendInterface):
                     fmt = MemoryFormat.KV_T2D
             else:
                 fmt = MemoryFormat.KV_2LTD
+        else:
+            # fmt was provided, but log if it doesn't match expected format for layerwise mode
+            if self.layerwise:
+                expected_fmt = MemoryFormat.KV_2TD if self.enable_blending else MemoryFormat.KV_T2D
+                if fmt != expected_fmt:
+                    logger.warning(
+                        f"batched_allocate: Provided fmt={fmt} doesn't match expected format "
+                        f"{expected_fmt} for layerwise={self.layerwise}, enable_blending={self.enable_blending}. "
+                        f"Using provided fmt={fmt}."
+                    )
 
+        logger.debug(
+            f"batched_allocate: shape={shape}, batch_size={batch_size}, fmt={fmt}, "
+            f"layerwise={self.layerwise}, enable_blending={self.enable_blending}"
+        )
         memory_objs = self.memory_allocator.batched_allocate(
             shape, dtype, batch_size, fmt
         )

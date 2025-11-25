@@ -57,6 +57,12 @@ class CacheGenSerializer(Serializer):
         # serialization inside gpu connector.
         assert memory_obj.tensor is not None
         tensor = memory_obj.tensor.cuda()
+        
+        logger.info(
+            f"CacheGenSerializer.serialize: SAVING with format={memory_obj.metadata.fmt}, "
+            f"shape={tensor.shape}, layer_id={layer_id}, "
+            f"dtype={memory_obj.metadata.dtype}"
+        )
 
         # Temporary fix for issue #83: encoder will have the default device 0
         # on all the ray workers. Need to set it to the correct device.
@@ -83,25 +89,29 @@ class CacheGenSerializer(Serializer):
 
         # Handle different tensor formats:
         # 1. Multi-layer format: [2, num_layers, num_tokens, hidden_size] (4 dims) - from non-layerwise connectors
-        # 2. Layerwise format: [2, num_tokens, hidden_size] or [num_tokens, 2, hidden_size] (3 dims) - from layerwise connectors
+        # 2. Layerwise format: [num_tokens, 2, hidden_size] (3 dims) - from layerwise connectors (KV_T2D format)
         num_dims = len(tensor.shape)
         
         if num_dims == 3:
             # Layerwise format: single layer tensor
-            # Handle both [2, num_tokens, hidden_size] and [num_tokens, 2, hidden_size]
-            if tensor.shape[0] == 2:
-                # Format: [2, num_tokens, hidden_size]
-                # Add layer dimension: [2, 1, num_tokens, hidden_size]
-                tensor = tensor.unsqueeze(1)
-            elif tensor.shape[1] == 2:
-                # Format: [num_tokens, 2, hidden_size]
+            # KV_T2D format should be [num_tokens, 2, hidden_size]
+            if tensor.shape[1] == 2:
+                # Format: [num_tokens, 2, hidden_size] (correct KV_T2D format)
                 # Permute to [2, num_tokens, hidden_size], then add layer dimension: [2, 1, num_tokens, hidden_size]
                 tensor = tensor.permute([1, 0, 2])
                 tensor = tensor.unsqueeze(1)
+            elif tensor.shape[0] == 2:
+                # Legacy format: [2, num_tokens, hidden_size] (should not happen, but handle for compatibility)
+                # Add layer dimension: [2, 1, num_tokens, hidden_size]
+                logger.warning(
+                    f"Received legacy format [2, num_tokens, hidden_size] instead of expected "
+                    f"KV_T2D format [num_tokens, 2, hidden_size]. Shape: {tensor.shape}"
+                )
+                tensor = tensor.unsqueeze(1)
             else:
                 raise ValueError(
-                    f"Unexpected 3D tensor shape {tensor.shape}. Expected either "
-                    f"[2, num_tokens, hidden_size] or [num_tokens, 2, hidden_size] for layerwise format."
+                    f"Unexpected 3D tensor shape {tensor.shape}. Expected "
+                    f"[num_tokens, 2, hidden_size] for KV_T2D layerwise format."
                 )
         elif num_dims == 4:
             # Multi-layer format: [2, num_layers, num_tokens, hidden_size]
@@ -137,6 +147,23 @@ class CacheGenSerializer(Serializer):
         ntokens = tensor.shape[2]
         num_layers = tensor.shape[0]
         
+        # In layerwise mode, we should only have 1 layer
+        # If we have more than 1 layer, this is a bug - the memory object should contain only one layer
+        if layer_id is not None and num_layers > 1:
+            logger.error(
+                f"Layerwise mode: Received tensor with {num_layers} layers but layer_id={layer_id}. "
+                f"Tensor shape: {tensor.shape}, memory_obj format: {memory_obj.metadata.fmt}. "
+                f"This suggests the GPU connector copied all layers into a single memory object. "
+                f"Expected single layer tensor for layerwise mode."
+            )
+            # Extract only the requested layer
+            tensor = tensor[layer_id:layer_id+1, :, :, :, :]  # [1, 2, num_tokens, num_heads, head_size]
+            num_layers = 1
+            logger.warning(
+                f"Extracting layer {layer_id} from multi-layer tensor. "
+                f"New tensor shape: {tensor.shape}"
+            )
+        
         # For layerwise mode (single layer), slice bins to the specific layer
         # If layer_id is provided, use bins for that layer; otherwise use layer 0
         if num_layers == 1 and layer_id is not None:
@@ -159,4 +186,9 @@ class CacheGenSerializer(Serializer):
             ntokens,
         )
 
+        logger.debug(
+            f"CacheGenSerializer.serialize: Successfully encoded tensor with "
+            f"format={memory_obj.metadata.fmt}, shape={tensor.shape}, "
+            f"ntokens={ntokens}, num_layers={num_layers}, layer_id={layer_id}"
+        )
         return BytesBufferMemoryObj(output_dict.to_bytes())

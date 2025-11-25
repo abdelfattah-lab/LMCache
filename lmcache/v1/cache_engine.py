@@ -414,11 +414,26 @@ class LMCacheEngine:
             num_tokens = end - start
             kv_shape_single_layer = self.gpu_connector.get_shape(num_tokens)
 
+            # Ensure fmt is set correctly for layerwise mode
+            if self.fmt is None:
+                logger.warning(
+                    f"self.fmt is None in store_layer, but use_layerwise={self.use_layerwise}. "
+                    f"Defaulting to KV_T2D format."
+                )
+                fmt_to_use = MemoryFormat.KV_T2D
+            else:
+                fmt_to_use = self.fmt
+            logger.info(
+                f"store_layer: SAVING with format={fmt_to_use}, "
+                f"shape={kv_shape_single_layer}, batch_size={self.num_layers}, "
+                f"num_tokens={num_tokens}, use_layerwise={self.use_layerwise}, "
+                f"enable_blending={getattr(self, '_enable_blending', 'unknown')}"
+            )
             memory_objs_multi_layer = self.storage_manager.batched_allocate(
                 kv_shape_single_layer,
                 kv_dtype,
                 batch_size=self.num_layers,
-                fmt=self.fmt,
+                fmt=fmt_to_use,
                 busy_loop=self.force_store_wait,
             )
 
@@ -458,6 +473,14 @@ class LMCacheEngine:
             for layer_id in range(self.num_layers):
                 yield
                 next(mem_obj_generator)
+                if memory_objs[layer_id]:
+                    logger.info(
+                        f"store_layer: SAVING layer_id={layer_id}, "
+                        f"num_memory_objs={len(memory_objs[layer_id])}, "
+                        f"formats={[obj.metadata.fmt for obj in memory_objs[layer_id]]}, "
+                        f"shapes={[obj.tensor.shape if obj.tensor is not None else 'None' for obj in memory_objs[layer_id]]}, "
+                        f"num_keys={len(keys[layer_id])}"
+                    )
                 self.storage_manager.batched_put(keys[layer_id], memory_objs[layer_id])
         else:
             # If no cache are found, we still need to yield to avoid
@@ -501,6 +524,7 @@ class LMCacheEngine:
         assert self.gpu_connector is not None, (
             "gpu_connector is required for retrieve operation"
         )
+        logger.info(f"Retrieve batched mode: {self.use_layerwise}")
 
         tot_kv_size = 0
         t = time.perf_counter()
@@ -614,6 +638,7 @@ class LMCacheEngine:
         assert self.gpu_connector is not None, (
             "gpu_connector is required for retrieve_layer operation"
         )
+        logger.info(f"Retrieve layer mode: {self.use_layerwise}")
 
         if mask is not None:
             num_required_tokens = torch.sum(mask).item()
@@ -695,6 +720,13 @@ class LMCacheEngine:
                     yield None
 
                 mem_objs_layer = task.result()
+                if mem_objs_layer:
+                    logger.info(
+                        f"retrieve_layer: RETRIEVING layer_id={layer_id}, "
+                        f"num_memory_objs={len(mem_objs_layer)}, "
+                        f"formats={[obj.metadata.fmt for obj in mem_objs_layer]}, "
+                        f"shapes={[obj.tensor.shape if obj.tensor is not None else 'None' for obj in mem_objs_layer]}"
+                    )
                 mem_obj_consumer.send(mem_objs_layer)
                 to_count_down.extend(mem_objs_layer)
 

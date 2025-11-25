@@ -64,7 +64,11 @@ class CacheGenDeserializer(Deserializer):
 
     # TODO(Jiayi): A lot of memory copies can be avoided in this function.
     @_lmcache_nvtx_annotate
-    def deserialize(self, buffer_memory_obj: BytesBufferMemoryObj) -> MemoryObj:
+    def deserialize(self, buffer_memory_obj: BytesBufferMemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+        logger.info(
+            f"CacheGenDeserializer.deserialize: RETRIEVING with layer_id={layer_id}, "
+            f"buffer_size={len(buffer_memory_obj.byte_array)} bytes"
+        )
         encoder_output = CacheGenGPUEncoderOutput.from_bytes(
             buffer_memory_obj.byte_array
         )
@@ -119,9 +123,37 @@ class CacheGenDeserializer(Deserializer):
                 hidden_dim = blob.shape[-1] * blob.shape[-2]
                 kv_chunk = blob.reshape(*blob.shape[:-2], hidden_dim).to(
                     self.dtype
-                )  # [nlayers, 2, ntokens, num_heads, head_size]
+                )  # [2, nlayers, ntokens, hidden_dim]
             case _:
                 raise RuntimeError("Unknown format %s" % self.fmt)
+
+        # For layerwise mode, extract the specific layer and convert to KV_T2D format
+        # KV_2LTD: [2, num_layers, num_tokens, hidden_dim]
+        # KV_T2D: [num_tokens, 2, hidden_dim] (for single layer)
+        if layer_id is not None and nlayers > 1:
+            # Layerwise mode: extract the specific layer from multi-layer data
+            # This can happen when data was stored in non-layerwise mode but retrieved in layerwise mode
+            if layer_id >= nlayers:
+                raise ValueError(
+                    f"layer_id ({layer_id}) is out of range for decoded data with {nlayers} layers. "
+                    f"Shape: {kv_chunk.shape}"
+                )
+            # Extract the specific layer: [2, nlayers, ntokens, hidden_dim] -> [2, ntokens, hidden_dim] -> [ntokens, 2, hidden_dim]
+            kv_chunk = kv_chunk[:, layer_id, :, :]  # Select layer_id from dimension 1 -> [2, ntokens, hidden_dim]
+            kv_chunk = kv_chunk.permute([1, 0, 2])  # Permute to [ntokens, 2, hidden_dim]
+            output_fmt = MemoryFormat.KV_T2D
+            logger.debug(
+                f"Extracted layer {layer_id} from multi-layer data (nlayers={nlayers}). "
+                f"Original shape: {blob.shape}, extracted shape: {kv_chunk.shape}"
+            )
+        elif nlayers == 1:
+            # Single layer already: [2, 1, ntokens, hidden_dim] -> [2, ntokens, hidden_dim] -> [ntokens, 2, hidden_dim]
+            kv_chunk = kv_chunk.squeeze(1)  # Remove the layer dimension (dimension 1) -> [2, ntokens, hidden_dim]
+            kv_chunk = kv_chunk.permute([1, 0, 2])  # Permute to [ntokens, 2, hidden_dim]
+            output_fmt = MemoryFormat.KV_T2D
+        else:
+            # Multi-layer mode: keep KV_2LTD format [2, nlayers, ntokens, hidden_dim]
+            output_fmt = MemoryFormat.KV_2LTD
 
         memory_obj = TensorMemoryObj(
             raw_data=kv_chunk,
@@ -131,9 +163,14 @@ class CacheGenDeserializer(Deserializer):
                 address=-1,
                 phy_size=kv_chunk.numel() * kv_chunk.element_size(),
                 ref_count=-1,  # HACK: avoid mis-free
-                fmt=MemoryFormat.KV_2LTD,
+                fmt=output_fmt,
             ),
             parent_allocator=None,
         )
 
+        logger.info(
+            f"CacheGenDeserializer.deserialize: RETRIEVED with format={output_fmt}, "
+            f"shape={kv_chunk.shape}, dtype={kv_chunk.dtype}, "
+            f"layer_id={layer_id}, nlayers={nlayers}"
+        )
         return memory_obj
