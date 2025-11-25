@@ -410,8 +410,8 @@ class TensorMemoryObj(MemoryObj):
             self.meta.ref_count -= 1
             if self.meta.ref_count < 0:
                 logger.warning(
-                    f"Ref count of MemoryObj {self.meta.address}"
-                    f"is negative: {self.meta.ref_count}."
+                    f"Ref count of MemoryObj {self.meta.address} "
+                    f"is negative: {self.meta.ref_count}. "
                     "Double free occurred somewhere."
                     "Setting ref count back to 0 as a hack but please find the bug."
                 )

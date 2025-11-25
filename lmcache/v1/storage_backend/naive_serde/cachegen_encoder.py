@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
+# Standard
+from typing import Optional
+
 # Third Party
 import torch
 
@@ -39,7 +42,7 @@ class CacheGenSerializer(Serializer):
 
     # TODO(Jiayi): A lot of memory copies can be avoided in this function.
     @_lmcache_nvtx_annotate
-    def serialize(self, memory_obj: MemoryObj) -> BytesBufferMemoryObj:
+    def serialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> BytesBufferMemoryObj:
         """
         Serialize a KV_2LTD MemoryObj to CACHEGEN_BINARY MemoryObj.
 
@@ -65,19 +68,94 @@ class CacheGenSerializer(Serializer):
         if tensor.device != self.value_bins.device:
             self.value_bins = self.value_bins.to(tensor.device)
 
+        # Handle sparse tensors: convert to dense if needed
+        # Sparse tensors cannot use view() or permute() operations
+        if tensor.is_sparse:
+            logger.warning(
+                f"Received sparse tensor with shape {tensor.shape}, converting to dense. "
+                f"Expected KV_2LTD format: [2, num_layers, num_tokens, hidden_size]"
+            )
+            tensor = tensor.to_dense()
+
+        # Ensure tensor is contiguous for view operation
+        if not tensor.is_contiguous():
+            tensor = tensor.contiguous()
+
+        # Handle different tensor formats:
+        # 1. Multi-layer format: [2, num_layers, num_tokens, hidden_size] (4 dims) - from non-layerwise connectors
+        # 2. Layerwise format: [2, num_tokens, hidden_size] or [num_tokens, 2, hidden_size] (3 dims) - from layerwise connectors
+        num_dims = len(tensor.shape)
+        
+        if num_dims == 3:
+            # Layerwise format: single layer tensor
+            # Handle both [2, num_tokens, hidden_size] and [num_tokens, 2, hidden_size]
+            if tensor.shape[0] == 2:
+                # Format: [2, num_tokens, hidden_size]
+                # Add layer dimension: [2, 1, num_tokens, hidden_size]
+                tensor = tensor.unsqueeze(1)
+            elif tensor.shape[1] == 2:
+                # Format: [num_tokens, 2, hidden_size]
+                # Permute to [2, num_tokens, hidden_size], then add layer dimension: [2, 1, num_tokens, hidden_size]
+                tensor = tensor.permute([1, 0, 2])
+                tensor = tensor.unsqueeze(1)
+            else:
+                raise ValueError(
+                    f"Unexpected 3D tensor shape {tensor.shape}. Expected either "
+                    f"[2, num_tokens, hidden_size] or [num_tokens, 2, hidden_size] for layerwise format."
+                )
+        elif num_dims == 4:
+            # Multi-layer format: [2, num_layers, num_tokens, hidden_size]
+            # This is the expected format, no transformation needed
+            pass
+        else:
+            raise ValueError(
+                f"Expected 3D (layerwise) or 4D (multi-layer) tensor, "
+                f"but got shape {tensor.shape} with {num_dims} dimensions. "
+                f"This suggests a mismatch between vLLM output format and LMCache expected format."
+            )
+
+        # At this point, tensor should be [2, num_layers, num_tokens, hidden_size]
+        # Validate that hidden_size can be split into num_heads * head_size
+        hidden_size = tensor.shape[-1]
+        expected_hidden_size = self.kv_shape[-2] * self.kv_shape[-1]  # num_heads * head_size
+        if hidden_size != expected_hidden_size:
+            raise ValueError(
+                f"Tensor hidden_size ({hidden_size}) does not match expected "
+                f"num_heads * head_size ({self.kv_shape[-2]} * {self.kv_shape[-1]} = {expected_hidden_size}). "
+                f"kv_shape from metadata: {self.kv_shape}, tensor shape: {tensor.shape}"
+            )
+
         # tensor is [2, num_layers, num_tokens, hidden_size]
+        # Reshape to [2, num_layers, num_tokens, num_heads, head_size]
         tensor = tensor.view(*tensor.shape[:-1], self.kv_shape[-2], self.kv_shape[-1])
+        # Permute to [num_layers, 2, num_tokens, num_heads, head_size]
         tensor = tensor.permute([1, 0, 2, 3, 4])
 
         # TODO(Jiayi): remove hardcoded "2"
         """ expecting a tensor of shape 
         [num_layers, 2, num_tokens, num_heads, head_size] """
         ntokens = tensor.shape[2]
+        num_layers = tensor.shape[0]
+        
+        # For layerwise mode (single layer), slice bins to the specific layer
+        # If layer_id is provided, use bins for that layer; otherwise use layer 0
+        if num_layers == 1 and layer_id is not None:
+            key_bins_to_use = self.key_bins[layer_id:layer_id+1]  # Shape [1]
+            value_bins_to_use = self.value_bins[layer_id:layer_id+1]  # Shape [1]
+        elif num_layers == 1:
+            # Single layer but no layer_id provided, use layer 0's bins as fallback
+            key_bins_to_use = self.key_bins[0:1]  # Shape [1]
+            value_bins_to_use = self.value_bins[0:1]  # Shape [1]
+        else:
+            # Multi-layer: use bins for all layers
+            key_bins_to_use = self.key_bins[:num_layers]  # Shape [num_layers]
+            value_bins_to_use = self.value_bins[:num_layers]  # Shape [num_layers]
+        
         output_dict = encode_function(
             tensor,
             self.cachegen_config,
-            self.key_bins,
-            self.value_bins,
+            key_bins_to_use,
+            value_bins_to_use,
             ntokens,
         )
 
