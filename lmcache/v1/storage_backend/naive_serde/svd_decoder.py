@@ -41,7 +41,7 @@ class SVDDeserializer(Deserializer):
         assert isinstance(memory_obj, BytesBufferMemoryObj)
         
         # Deserialize from bytes
-        result = self._from_bytes(memory_obj.bytes_data)
+        result = self._from_bytes(memory_obj.byte_array)
         
         compressed_data = result['compressed_data']
         meta = result['metadata']
