@@ -86,9 +86,9 @@ def test_v1_svd_layerwise_roundtrip(chunk_size, rank):
     reason="SVD requires CUDA",
 )
 def test_v1_svd_compression_ratio(chunk_size):
-    """Test that SVD compression with low rank compresses data."""
+    """Test SVD serialization size calculation."""
     fmt = "vllm"
-    rank = 256  # Quarter of hidden_dim (1024) for actual compression
+    rank = 64  # Very low rank for actual compression
     
     config = LMCacheEngineConfig.from_defaults(
         chunk_size=chunk_size,
@@ -140,8 +140,11 @@ def test_v1_svd_compression_ratio(chunk_size):
     print(f"Original: {original_size} bytes, Compressed: {compressed_size} bytes, "
           f"Ratio: {compression_ratio:.2f}x")
     
-    # With rank=256 (quarter), we expect compression even with torch.save overhead
-    assert compressed_size < original_size, "SVD with rank=256 should compress the data"
+    # With rank=64, we get actual compression:
+    # U: [2, 128, 64], S: [2, 64], Vt: [2, 64, 1024]
+    # Raw: (2*128*64 + 2*64 + 2*64*1024) * 2 bytes ≈ 295 KB < 524 KB original
+    # Even with torch.save overhead, should compress
+    assert compressed_size < original_size, f"SVD with rank={rank} should compress: {compressed_size} < {original_size}"
 
 
 @pytest.mark.parametrize("rank", [256, 512, 1024])
