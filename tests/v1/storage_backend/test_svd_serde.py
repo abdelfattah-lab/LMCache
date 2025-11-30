@@ -11,7 +11,7 @@ import torch
 # First Party
 from lmcache.config import LMCacheEngineMetadata
 from lmcache.v1.config import LMCacheEngineConfig
-from lmcache.v1.memory_management import TensorMemoryObj
+from lmcache.v1.memory_management import AdHocMemoryAllocator, MemoryFormat
 from lmcache.v1.storage_backend.naive_serde.svd_decoder import SVDDeserializer
 from lmcache.v1.storage_backend.naive_serde.svd_encoder import SVDSerializer
 
@@ -45,10 +45,17 @@ def test_v1_svd_layerwise_roundtrip(chunk_size, rank):
     # Generate layerwise KV cache: [num_tokens, 2, hidden_size] (KV_T2D format)
     num_tokens = chunk_size
     hidden_size = 8 * 128  # num_heads * head_size
-    kv_layerwise = torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda")
     
-    # Create TensorMemoryObj
-    memory_obj = TensorMemoryObj(kv_layerwise, dtype=torch.bfloat16, fmt=fmt)
+    # Create TensorMemoryObj using allocator
+    allocator = AdHocMemoryAllocator(device="cuda")
+    memory_obj = allocator.allocate(
+        shape=(num_tokens, 2, hidden_size),
+        dtype=torch.bfloat16,
+        fmt=MemoryFormat.KV_T2D
+    )
+    # Fill with random data
+    memory_obj.tensor.copy_(torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda"))
+    kv_layerwise = memory_obj.tensor.clone()
     
     # Serialize
     compressed_obj = serializer.serialize(memory_obj, layer_id=0)
@@ -102,9 +109,25 @@ def test_v1_svd_compression_ratio(chunk_size):
     # Generate layerwise KV cache
     num_tokens = chunk_size
     hidden_size = 8 * 128
-    kv_layerwise = torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda")
     
-    memory_obj = TensorMemoryObj(kv_layerwise, dtype=torch.bfloat16, fmt=fmt)
+    # Create TensorMemoryObj using allocator
+    allocator = AdHocMemoryAllocator(device="cuda")
+    memory_obj = allocator.allocate(
+        shape=(num_tokens, 2, hidden_size),
+        dtype=torch.bfloat16,
+        fmt=MemoryFormat.KV_T2D
+    )
+    # Fill with random data
+    memory_obj.tensor.copy_(torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda"))
+    kv_layerwise = memory_obj.tensor.clone()
+    memory_obj = allocator.allocate(
+        shape=(num_tokens, 2, hidden_size),
+        dtype=torch.bfloat16,
+        fmt=MemoryFormat.KV_T2D
+    )
+    # Fill with random data
+    memory_obj.tensor.copy_(torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda"))
+    kv_layerwise = memory_obj.tensor.clone()
     
     # Serialize
     compressed_obj = serializer.serialize(memory_obj, layer_id=0)
@@ -153,9 +176,17 @@ def test_v1_svd_different_ranks(rank):
     # Generate data
     num_tokens = chunk_size
     hidden_size = 8 * 128
-    kv_layerwise = torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda")
     
-    memory_obj = TensorMemoryObj(kv_layerwise, dtype=torch.bfloat16, fmt=fmt)
+    # Create TensorMemoryObj using allocator
+    allocator = AdHocMemoryAllocator(device="cuda")
+    memory_obj = allocator.allocate(
+        shape=(num_tokens, 2, hidden_size),
+        dtype=torch.bfloat16,
+        fmt=MemoryFormat.KV_T2D
+    )
+    # Fill with random data
+    memory_obj.tensor.copy_(torch.rand(num_tokens, 2, hidden_size, dtype=torch.bfloat16, device="cuda"))
+    kv_layerwise = memory_obj.tensor.clone()
     
     # Roundtrip
     compressed_obj = serializer.serialize(memory_obj, layer_id=0)
