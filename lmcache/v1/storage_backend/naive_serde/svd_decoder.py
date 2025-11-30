@@ -13,6 +13,7 @@ from lmcache.utils import _lmcache_nvtx_annotate
 from lmcache.v1.config import LMCacheEngineConfig
 from lmcache.v1.memory_management import BytesBufferMemoryObj, MemoryObj, TensorMemoryObj
 from lmcache.v1.storage_backend.naive_serde.serde import Deserializer
+from lmcache.v1.memory_management import MemoryObjMetadata, MemoryFormat
 
 logger = init_logger(__name__)
 
@@ -84,12 +85,20 @@ class SVDDeserializer(Deserializer):
         logger.info(
             f"SVDDeserializer.deserialize: reconstructed to shape={full_tensor.shape}"
         )
-        
-        # Create TensorMemoryObj
-        return TensorMemoryObj(
-            full_tensor,
+    
+        metadata = MemoryObjMetadata(
+            shape=full_tensor.shape,
             dtype=self.dtype,
-            fmt=self.fmt,
+            address=-1,
+            phy_size=full_tensor.numel() * full_tensor.element_size(),
+            ref_count=-1, 
+            fmt=MemoryFormat.KV_T2D,
+        )
+        
+        return TensorMemoryObj(
+            raw_data=full_tensor,
+            metadata=metadata,
+            parent_allocator=None,
         )
 
     def _from_bytes(self, bytes_data: bytes) -> dict:
