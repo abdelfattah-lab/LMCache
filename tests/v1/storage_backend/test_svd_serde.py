@@ -25,8 +25,10 @@ from lmcache.v1.storage_backend.naive_serde.svd_encoder import SVDSerializer
 def test_v1_svd_layerwise_roundtrip(chunk_size, rank):
     """Test V1 SVD encoder/decoder with layerwise format (KV_T2D)."""
     fmt = "vllm"
-    config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
-    config.set_extra_config_value("svd_rank", rank)
+    config = LMCacheEngineConfig.from_defaults(
+        chunk_size=chunk_size,
+        extra_config={"svd_rank": rank}
+    )
     
     metadata = LMCacheEngineMetadata(
         model_name="mistralai/Mistral-7B-Instruct-v0.2",
@@ -81,8 +83,10 @@ def test_v1_svd_compression_ratio(chunk_size):
     fmt = "vllm"
     rank = 512  # Half of hidden_dim (1024)
     
-    config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
-    config.set_extra_config_value("svd_rank", rank)
+    config = LMCacheEngineConfig.from_defaults(
+        chunk_size=chunk_size,
+        extra_config={"svd_rank": rank}
+    )
     
     metadata = LMCacheEngineMetadata(
         model_name="mistralai/Mistral-7B-Instruct-v0.2",
@@ -129,8 +133,10 @@ def test_v1_svd_different_ranks(rank):
     fmt = "vllm"
     chunk_size = 128
     
-    config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
-    config.set_extra_config_value("svd_rank", rank)
+    config = LMCacheEngineConfig.from_defaults(
+        chunk_size=chunk_size,
+        extra_config={"svd_rank": rank}
+    )
     
     metadata = LMCacheEngineMetadata(
         model_name="mistralai/Mistral-7B-Instruct-v0.2",
