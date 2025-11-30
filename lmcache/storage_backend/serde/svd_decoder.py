@@ -45,10 +45,10 @@ def svd_decode_single_layer(
     Vt_trunc = svd_components['Vt']  # [bs, rank, hidden_dim]
     
     # Reconstruct: tensor_reshaped = U_trunc @ diag(S_trunc) @ Vt_trunc
-    # [bs, num_tokens, rank] @ [bs, rank, rank] @ [bs, rank, hidden_dim] 
-    # -> [bs, num_tokens, hidden_dim]
+    # [bs, num_tokens, rank] @ [bs, rank, rank] @ [bs, rank, num_heads * head_size] 
+    # -> [bs, num_tokens, num_heads * head_size]
     S_diag = torch.diag_embed(S_trunc)  # [bs, rank, rank]
-    reconstructed = U_trunc @ S_diag @ Vt_trunc  # [bs, num_tokens, hidden_dim]
+    reconstructed = U_trunc @ S_diag @ Vt_trunc  # [bs, num_tokens, num_heads * head_size]
     
     # Reshape back to [bs, num_tokens, num_heads, head_size]
     bs, num_tokens, _ = reconstructed.shape
