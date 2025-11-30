@@ -165,18 +165,18 @@ def test_svd_encoder(chunk_size, rank):
     assert isinstance(output, bytes)
 
 
-@pytest.mark.parametrize("fmt", ["vllm", "huggingface"])
 @pytest.mark.parametrize("chunk_size", [16, 128, 256])
 @pytest.mark.parametrize("rank", [512, 1024])
 @pytest.mark.skipif(
     not torch.cuda.is_available(),
     reason="SVD requires CUDA",
 )
-def test_svd_decoder(fmt, chunk_size, rank):
-    """Test SVD encoder -> decoder roundtrip - single layer."""
+def test_svd_decoder(chunk_size, rank):
+    """Test SVD encoder -> decoder roundtrip - single layer (vllm format only)."""
+    fmt = "vllm"
     config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
     config.svd_rank = rank
-    dtype = torch.bfloat16 if fmt == "vllm" else torch.float16
+    dtype = torch.bfloat16
     metadata = LMCacheEngineMetadata(
         model_name="mistralai/Mistral-7B-Instruct-v0.2",
         world_size=1,
@@ -213,13 +213,13 @@ def test_svd_decoder(fmt, chunk_size, rank):
     assert decoded_kv.mean() != 0
 
 
-@pytest.mark.parametrize("fmt", ["vllm"])
 @pytest.mark.skipif(
     not torch.cuda.is_available(),
     reason="SVD requires CUDA",
 )
-def test_svd_unmatched_size(fmt):
-    """Test SVD with non-standard chunk sizes - single layer."""
+def test_svd_unmatched_size():
+    """Test SVD with non-standard chunk sizes - single layer (vllm format only)."""
+    fmt = "vllm"
     chunk_size = 256
     rank = 1024
     config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)

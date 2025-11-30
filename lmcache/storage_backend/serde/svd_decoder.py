@@ -197,7 +197,7 @@ class SVDDeserializer(Deserializer):
         dtype = self.dtype
         device = torch.device('cuda')
         
-        # Decode
+        # Decode and return vllm format
         full_tensor = decode_function(
             compressed_data,
             num_tokens,
@@ -207,12 +207,5 @@ class SVDDeserializer(Deserializer):
             device,
         )
         
-        # full_tensor is [2, num_tokens, num_heads, head_size]
-        # Return format based on metadata.fmt
-        if self.fmt == "vllm":
-            return full_tensor
-        elif self.fmt == "huggingface":
-            # [2, num_tokens, num_heads, head_size] -> [2, num_heads, num_tokens, head_size]
-            return full_tensor.permute(0, 2, 1, 3)
-        else:
-            raise RuntimeError(f"Unknown format {self.fmt}")
+        # full_tensor is [2, num_tokens, num_heads, head_size] (vllm format)
+        return full_tensor

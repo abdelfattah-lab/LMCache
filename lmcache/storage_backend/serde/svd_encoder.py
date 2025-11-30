@@ -173,7 +173,7 @@ class SVDSerializer(Serializer):
         Serialize a single-layer KV cache tensor using SVD compression.
         
         Args:
-            tensor: Input tensor of shape [2, num_tokens, num_heads, head_size]
+            tensor: Input tensor in vllm format [2, num_tokens, num_heads, head_size]
                    where dimension 0 represents [key, value]
         
         Returns:
@@ -196,7 +196,6 @@ class SVDSerializer(Serializer):
                 'head_size': self.head_size,
                 'rank': self.rank,
                 'dtype': str(self.dtype),
-                'fmt': self.fmt,
             }
         }
         
