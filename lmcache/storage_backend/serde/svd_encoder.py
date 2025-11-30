@@ -47,13 +47,12 @@ def svd_encode_single_layer(
     tensor = tensor.unsqueeze(0)  # [1, num_tokens, num_heads, head_size]
     tensor_reshaped = tensor.transpose(1, 2).reshape(bs, num_tokens, num_heads * head_size)
     
-    # Convert to float32 for SVD (bfloat16 not supported by torch.linalg.svd on CUDA)
+    # Convert to float32 for SVD 
     original_dtype = tensor_reshaped.dtype
-    if original_dtype == torch.bfloat16:
+    if original_dtype in (torch.bfloat16, torch.float16):
         tensor_reshaped = tensor_reshaped.to(torch.float32)
     
     # Perform SVD
-    # NOTE: Have deterministic issue but faster
     U, S, V_h = torch.linalg.svd(tensor_reshaped, full_matrices=False)
     
     # Truncate to rank
@@ -62,7 +61,7 @@ def svd_encode_single_layer(
     Vt_trunc = V_h[:, :rank, :]  # [bs, rank, num_heads*head_size]
     
     # Convert back to original dtype if needed
-    if original_dtype == torch.bfloat16:
+    if original_dtype in (torch.bfloat16, torch.float16):
         U_trunc = U_trunc.to(original_dtype)
         S_trunc = S_trunc.to(original_dtype)
         Vt_trunc = Vt_trunc.to(original_dtype)
