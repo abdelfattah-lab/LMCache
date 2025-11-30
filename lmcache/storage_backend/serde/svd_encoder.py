@@ -39,37 +39,43 @@ def svd_encode_single_layer(
             - 'S': Singular values [1, rank]
             - 'Vt': Right singular vectors [1, rank, num_heads*head_size]
     """
-    # Prepare for SVD: [num_tokens, num_heads, head_size] -> [1, num_tokens, num_heads*head_size]
+    # Prepare for SVD following standard pattern:
+    # [num_tokens, num_heads, head_size] -> [1, num_tokens, num_heads*head_size]
     bs = 1
     num_tokens, num_heads, head_size = tensor.shape
     
-    # Add batch dimension and reshape
-    tensor = tensor.unsqueeze(0)  # [1, num_tokens, num_heads, head_size]
-    tensor_reshaped = tensor.transpose(1, 2).reshape(bs, num_tokens, num_heads * head_size)
+    # Add batch dimension: [num_tokens, num_heads, head_size] -> [1, num_tokens, num_heads, head_size]
+    x = tensor.unsqueeze(0)
     
-    # Convert to float32 for SVD 
-    original_dtype = tensor_reshaped.dtype
+    # Reshape: [1, num_tokens, num_heads, head_size] -> [1, num_tokens, num_heads*head_size]
+    x2d = x.reshape(bs, num_tokens, num_heads * head_size)
+    
+    # Convert to float32 for SVD stability
+    original_dtype = x2d.dtype
     if original_dtype in (torch.bfloat16, torch.float16):
-        tensor_reshaped = tensor_reshaped.to(torch.float32)
+        x2d = x2d.to(torch.float32)
     
     # Perform SVD
-    U, S, V_h = torch.linalg.svd(tensor_reshaped, full_matrices=False)
+    U, S, Vh = torch.linalg.svd(x2d, full_matrices=False)
+    
+    # Determine actual rank to use
+    r = min(rank, S.shape[-1])
     
     # Truncate to rank
-    U_trunc = U[:, :, :rank]  # [bs, num_tokens, rank]
-    S_trunc = S[:, :rank]      # [bs, rank]
-    Vt_trunc = V_h[:, :rank, :]  # [bs, rank, num_heads*head_size]
+    U_trunc = U[:, :, :r]  # [bs, num_tokens, r]
+    S_trunc = S[:, :r]      # [bs, r]
+    Vh_trunc = Vh[:, :r, :]  # [bs, r, num_heads*head_size]
     
     # Convert back to original dtype if needed
     if original_dtype in (torch.bfloat16, torch.float16):
         U_trunc = U_trunc.to(original_dtype)
         S_trunc = S_trunc.to(original_dtype)
-        Vt_trunc = Vt_trunc.to(original_dtype)
+        Vh_trunc = Vh_trunc.to(original_dtype)
     
     return {
         'U': U_trunc,
         'S': S_trunc,
-        'Vt': Vt_trunc,
+        'Vt': Vh_trunc,
     }
 
 
