@@ -8,6 +8,8 @@ from lmcache.config import LMCacheEngineConfig, LMCacheEngineMetadata
 from lmcache.storage_backend.serde.cachegen_basics import CacheGenEncoderOutput
 from lmcache.storage_backend.serde.cachegen_decoder import CacheGenDeserializer
 from lmcache.storage_backend.serde.cachegen_encoder import CacheGenSerializer
+from lmcache.storage_backend.serde.svd_decoder import SVDDeserializer
+from lmcache.storage_backend.serde.svd_encoder import SVDSerializer
 
 
 def generate_kv_cache(num_tokens, fmt, device):
@@ -128,3 +130,116 @@ def test_cachegen_unmatched_size(fmt):
     decoded_kv = deserializer.from_bytes(output)
     assert decoded_kv.shape == kv.shape
     assert decoded_kv.mean() != 0
+
+
+@pytest.mark.parametrize("chunk_size", [16, 128, 256])
+@pytest.mark.parametrize("rank", [512, 1024, 2048])
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="SVD requires CUDA",
+)
+def test_svd_encoder(chunk_size, rank):
+    """Test SVD encoder with different chunk sizes and ranks."""
+    fmt = "vllm"
+    config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
+    config.svd_rank = rank
+    metadata = LMCacheEngineMetadata(
+        model_name="mistralai/Mistral-7B-Instruct-v0.2",
+        world_size=1,
+        worker_id=0,
+        fmt=fmt,
+        kv_dtype=torch.bfloat16,
+        kv_shape=(8, 128),  # num_heads=8, head_size=128
+    )
+    
+    serializer = SVDSerializer(config, metadata, torch.bfloat16)
+    
+    # Generate test KV cache using same helper
+    kv = to_blob(generate_kv_cache(chunk_size, fmt, "cuda"))
+    output = serializer.to_bytes(kv)
+    
+    # Check that we got compressed bytes
+    assert len(output) > 0
+    assert isinstance(output, bytes)
+
+
+@pytest.mark.parametrize("fmt", ["vllm", "huggingface"])
+@pytest.mark.parametrize("chunk_size", [16, 128, 256])
+@pytest.mark.parametrize("rank", [512, 1024])
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="SVD requires CUDA",
+)
+def test_svd_decoder(fmt, chunk_size, rank):
+    """Test SVD encoder -> decoder roundtrip."""
+    config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
+    config.svd_rank = rank
+    metadata = LMCacheEngineMetadata(
+        model_name="mistralai/Mistral-7B-Instruct-v0.2",
+        world_size=1,
+        worker_id=0,
+        fmt=fmt,
+        kv_dtype=torch.bfloat16,
+        kv_shape=(8, 128),  # num_heads=8, head_size=128
+    )
+    
+    serializer = SVDSerializer(config, metadata, torch.bfloat16)
+    deserializer = SVDDeserializer(config, metadata, torch.bfloat16)
+    
+    # Generate test KV cache
+    kv = to_blob(generate_kv_cache(chunk_size, fmt, "cuda"))
+    
+    # Encode and decode
+    output = serializer.to_bytes(kv)
+    decoded_kv = deserializer.from_bytes(output)
+    
+    # Check shape matches
+    assert decoded_kv.shape == kv.shape
+    
+    # Check reconstruction quality (lossy compression)
+    # Calculate relative error
+    diff = torch.abs(kv - decoded_kv)
+    relative_error = torch.norm(diff) / torch.norm(kv)
+    
+    # For reasonable rank, error should be small
+    if rank >= 1024:
+        assert relative_error < 0.1, f"Relative error too high: {relative_error}"
+    
+    # Sanity check - decoded tensor should have non-zero values
+    assert decoded_kv.mean() != 0
+
+
+@pytest.mark.parametrize("fmt", ["vllm"])
+@pytest.mark.skipif(
+    not torch.cuda.is_available(),
+    reason="SVD requires CUDA",
+)
+def test_svd_unmatched_size(fmt):
+    """Test SVD with non-standard chunk sizes."""
+    chunk_size = 256
+    rank = 1024
+    config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
+    config.svd_rank = rank
+    metadata = LMCacheEngineMetadata(
+        model_name="mistralai/Mistral-7B-Instruct-v0.2",
+        world_size=1,
+        worker_id=0,
+        fmt=fmt,
+        kv_dtype=torch.bfloat16,
+        kv_shape=(8, 128),
+    )
+    
+    serializer = SVDSerializer(config, metadata, torch.bfloat16)
+    deserializer = SVDDeserializer(config, metadata, torch.bfloat16)
+    
+    # Test with smaller chunk size than configured
+    kv = to_blob(generate_kv_cache(chunk_size - 20, fmt, "cuda"))
+    output = serializer.to_bytes(kv)
+    
+    decoded_kv = deserializer.from_bytes(output)
+    assert decoded_kv.shape == kv.shape
+    assert decoded_kv.mean() != 0
+    
+    # Check reconstruction quality
+    relative_error = torch.norm(kv - decoded_kv) / torch.norm(kv)
+    assert relative_error < 0.2
