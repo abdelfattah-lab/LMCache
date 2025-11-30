@@ -44,11 +44,22 @@ def svd_decode_single_layer(
     S_trunc = svd_components['S']  # [bs, rank]
     Vt_trunc = svd_components['Vt']  # [bs, rank, hidden_dim]
     
+    # Convert to float32 for reconstruction (needed for precision)
+    original_dtype = U_trunc.dtype
+    if original_dtype in (torch.bfloat16, torch.float16):
+        U_trunc = U_trunc.to(torch.float32)
+        S_trunc = S_trunc.to(torch.float32)
+        Vt_trunc = Vt_trunc.to(torch.float32)
+    
     # Reconstruct: tensor_reshaped = U_trunc @ diag(S_trunc) @ Vt_trunc
     # [bs, num_tokens, rank] @ [bs, rank, rank] @ [bs, rank, num_heads * head_size] 
     # -> [bs, num_tokens, num_heads * head_size]
     S_diag = torch.diag_embed(S_trunc)  # [bs, rank, rank]
     reconstructed = U_trunc @ S_diag @ Vt_trunc  # [bs, num_tokens, num_heads * head_size]
+    
+    # Convert back to original dtype
+    if original_dtype in (torch.bfloat16, torch.float16):
+        reconstructed = reconstructed.to(original_dtype)
     
     # Reshape back to [bs, num_tokens, num_heads, head_size]
     bs, num_tokens, _ = reconstructed.shape
