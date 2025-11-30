@@ -51,16 +51,14 @@ class SVDDeserializer(Deserializer):
             f"rank={meta['rank']}, layer_id={layer_id}"
         )
         
-        num_layers = meta['num_layers']
         num_tokens = meta['num_tokens']
         num_heads = meta['num_heads']
         head_size = meta['head_size']
         
-        # Use the decoder function to reconstruct the tensor
-        # decode_function returns shape: [num_layers, 2, num_tokens, num_heads, head_size]
-        full_tensor = decode_function(
+        # Use the decoder function to reconstruct the single layer
+        # decode_function returns shape: [2, num_tokens, num_heads, head_size]
+        single_layer = decode_function(
             compressed_data,
-            num_layers,
             num_tokens,
             num_heads,
             head_size,
@@ -68,12 +66,13 @@ class SVDDeserializer(Deserializer):
             torch.device('cuda'),
         )
         
-        # Permute to [2, num_layers, num_tokens, num_heads, head_size]
-        full_tensor = full_tensor.permute([1, 0, 2, 3, 4])
+        # single_layer is [2, num_tokens, num_heads, head_size]
+        # Add layer dimension: [2, 1, num_tokens, num_heads, head_size]
+        full_tensor = single_layer.unsqueeze(1)
         
-        # Reshape to [2, num_layers, num_tokens, hidden_size]
+        # Reshape to [2, 1, num_tokens, hidden_size]
         hidden_size = num_heads * head_size
-        full_tensor = full_tensor.reshape(2, num_layers, num_tokens, hidden_size)
+        full_tensor = full_tensor.reshape(2, 1, num_tokens, hidden_size)
         
         # Convert back to original format if needed
         original_shape = tuple(meta['original_shape'])

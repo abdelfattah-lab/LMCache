@@ -53,7 +53,15 @@ def svd_decode_single_layer(
     reconstructed = torch.bmm(U_scaled, Vt_trunc)
     
     # Reshape back to [bs, num_tokens, num_heads, head_size]
-    bs, num_tokens, _ = reconstructed.shape
+    bs, num_tokens, hidden_dim = reconstructed.shape
+    expected_hidden_dim = num_heads * head_size
+    
+    if hidden_dim != expected_hidden_dim:
+        raise RuntimeError(
+            f"Reconstructed hidden_dim={hidden_dim} doesn't match "
+            f"num_heads * head_size = {num_heads} * {head_size} = {expected_hidden_dim}"
+        )
+    
     reconstructed = reconstructed.reshape(bs, num_tokens, num_heads, head_size)
     
     # Remove batch dimension: [num_tokens, num_heads, head_size]
@@ -65,7 +73,6 @@ def svd_decode_single_layer(
 @_lmcache_nvtx_annotate
 def decode_function(
     compressed_data: List[Dict[str, torch.Tensor]],
-    num_layers: int,
     num_tokens: int,
     num_heads: int,
     head_size: int,
@@ -73,15 +80,13 @@ def decode_function(
     device: torch.device,
 ) -> torch.Tensor:
     """
-    Decode SVD-compressed data back to full KV cache tensor.
+    Decode SVD-compressed data back to single-layer KV cache tensor.
     
-    This is the main decoding function that reconstructs the full KV cache tensor
-    from compressed SVD components.
+    This function reconstructs a single layer's KV cache from compressed SVD components.
     
     Args:
-        compressed_data: List of dictionaries containing SVD components,
-                        one per (layer, kv_type) combination
-        num_layers: Number of transformer layers
+        compressed_data: List of 2 dictionaries containing SVD components,
+                        one for key and one for value
         num_tokens: Sequence length
         num_heads: Number of attention heads
         head_size: Size of each attention head
@@ -89,51 +94,37 @@ def decode_function(
         device: Device for output tensor
         
     Returns:
-        Reconstructed tensor of shape [num_layers, 2, num_tokens, num_heads, head_size]
+        Reconstructed tensor of shape [2, num_tokens, num_heads, head_size]
     """
     kv_type = 2  # key and value
-    expected_components = num_layers * kv_type
     
-    if len(compressed_data) != expected_components:
+    if len(compressed_data) != kv_type:
         raise ValueError(
-            f"Expected {expected_components} compressed components "
-            f"({num_layers} layers * {kv_type} types), "
+            f"Expected {kv_type} compressed components (key, value), "
             f"got {len(compressed_data)}"
         )
     
-    # Reconstruct tensor layer by layer
-    reconstructed_layers = []
-    
-    data_idx = 0
-    for layer_idx in range(num_layers):
-        layer_kv = []
-        for kv_idx in range(kv_type):  # 0=key, 1=value
-            svd_components = compressed_data[data_idx]
-            data_idx += 1
-            
-            # Reconstruct single layer+type
-            reconstructed = svd_decode_single_layer(
-                svd_components,
-                num_heads,
-                head_size,
-            )
-            layer_kv.append(reconstructed)
+    # Reconstruct key and value
+    layer_kv = []
+    for kv_idx in range(kv_type):  # 0=key, 1=value
+        svd_components = compressed_data[kv_idx]
         
-        # Stack key and value: [2, num_tokens, num_heads, head_size]
-        layer_tensor = torch.stack(layer_kv, dim=0)
-        reconstructed_layers.append(layer_tensor)
+        # Reconstruct key or value
+        reconstructed = svd_decode_single_layer(
+            svd_components,
+            num_heads,
+            head_size,
+        )
+        layer_kv.append(reconstructed)
     
-    # Stack all layers: [num_layers, 2, num_tokens, num_heads, head_size]
-    if len(reconstructed_layers) > 1:
-        full_tensor = torch.stack(reconstructed_layers, dim=0)
-    else:
-        full_tensor = reconstructed_layers[0].unsqueeze(0)
+    # Stack key and value: [2, num_tokens, num_heads, head_size]
+    full_tensor = torch.stack(layer_kv, dim=0)
     
     # Ensure correct dtype and device
     full_tensor = full_tensor.to(dtype=dtype, device=device)
     
     logger.debug(
-        f"SVD decode_function: Reconstructed {num_layers} layers, {kv_type} types, "
+        f"SVD decode_function: Reconstructed single layer with {kv_type} types (key, value), "
         f"shape={full_tensor.shape}"
     )
     
@@ -174,13 +165,13 @@ class SVDDeserializer(Deserializer):
     @_lmcache_nvtx_annotate
     def from_bytes(self, bs: bytes) -> torch.Tensor:
         """
-        Deserialize SVD-compressed bytes back to KV cache tensor.
+        Deserialize SVD-compressed bytes back to single-layer KV cache tensor.
         
         Args:
             bs: Compressed bytes
         
         Returns:
-            Reconstructed tensor of shape [num_layers, 2, num_tokens, num_heads, head_size]
+            Reconstructed tensor of shape [2, num_tokens, num_heads, head_size]
         """
         # Load dict from bytes (torch.save format)
         import io
@@ -195,12 +186,11 @@ class SVDDeserializer(Deserializer):
         meta = result['metadata']
         
         # Extract metadata with validation
-        required_keys = ['num_layers', 'num_tokens', 'num_heads', 'head_size']
+        required_keys = ['num_tokens', 'num_heads', 'head_size']
         for key in required_keys:
             if key not in meta:
                 raise ValueError(f"Invalid SVD metadata: missing '{key}'")
         
-        num_layers = meta['num_layers']
         num_tokens = meta['num_tokens']
         num_heads = meta['num_heads']
         head_size = meta['head_size']
@@ -210,7 +200,6 @@ class SVDDeserializer(Deserializer):
         # Decode
         full_tensor = decode_function(
             compressed_data,
-            num_layers,
             num_tokens,
             num_heads,
             head_size,
@@ -218,12 +207,12 @@ class SVDDeserializer(Deserializer):
             device,
         )
         
-        # full_tensor is [num_layers, 2, num_tokens, num_heads, head_size]
+        # full_tensor is [2, num_tokens, num_heads, head_size]
         # Return format based on metadata.fmt
         if self.fmt == "vllm":
             return full_tensor
         elif self.fmt == "huggingface":
-            # [num_layers, 2, num_tokens, num_heads, head_size] -> [num_layers, 2, num_heads, num_tokens, head_size]
-            return full_tensor.permute(0, 1, 3, 2, 4)
+            # [2, num_tokens, num_heads, head_size] -> [2, num_heads, num_tokens, head_size]
+            return full_tensor.permute(0, 2, 1, 3)
         else:
             raise RuntimeError(f"Unknown format {self.fmt}")

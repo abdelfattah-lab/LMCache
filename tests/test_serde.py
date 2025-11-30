@@ -139,7 +139,7 @@ def test_cachegen_unmatched_size(fmt):
     reason="SVD requires CUDA",
 )
 def test_svd_encoder(chunk_size, rank):
-    """Test SVD encoder with different chunk sizes and ranks."""
+    """Test SVD encoder with different chunk sizes and ranks - single layer."""
     fmt = "vllm"
     config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
     config.svd_rank = rank
@@ -154,9 +154,11 @@ def test_svd_encoder(chunk_size, rank):
     
     serializer = SVDSerializer(config, metadata, torch.bfloat16)
     
-    # Generate test KV cache using same helper
-    kv = to_blob(generate_kv_cache(chunk_size, fmt, "cuda"))
-    output = serializer.to_bytes(kv)
+    # Generate single layer KV cache: [2, num_tokens, num_heads, head_size]
+    kv_full = to_blob(generate_kv_cache(chunk_size, fmt, "cuda"))
+    kv_single_layer = kv_full[0]  # Take first layer: [2, num_tokens, num_heads, head_size]
+    
+    output = serializer.to_bytes(kv_single_layer)
     
     # Check that we got compressed bytes
     assert len(output) > 0
@@ -171,23 +173,25 @@ def test_svd_encoder(chunk_size, rank):
     reason="SVD requires CUDA",
 )
 def test_svd_decoder(fmt, chunk_size, rank):
-    """Test SVD encoder -> decoder roundtrip."""
+    """Test SVD encoder -> decoder roundtrip - single layer."""
     config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
     config.svd_rank = rank
+    dtype = torch.bfloat16 if fmt == "vllm" else torch.float16
     metadata = LMCacheEngineMetadata(
         model_name="mistralai/Mistral-7B-Instruct-v0.2",
         world_size=1,
         worker_id=0,
         fmt=fmt,
-        kv_dtype=torch.bfloat16,
+        kv_dtype=dtype,
         kv_shape=(8, 128),  # num_heads=8, head_size=128
     )
     
-    serializer = SVDSerializer(config, metadata, torch.bfloat16)
-    deserializer = SVDDeserializer(config, metadata, torch.bfloat16)
+    serializer = SVDSerializer(config, metadata, dtype)
+    deserializer = SVDDeserializer(config, metadata, dtype)
     
-    # Generate test KV cache
-    kv = to_blob(generate_kv_cache(chunk_size, fmt, "cuda"))
+    # Generate single layer KV cache: [2, num_tokens, num_heads, head_size]
+    kv_full = to_blob(generate_kv_cache(chunk_size, fmt, "cuda"))
+    kv = kv_full[0]  # Take first layer: [2, num_tokens, num_heads, head_size]
     
     # Encode and decode
     output = serializer.to_bytes(kv)
@@ -215,7 +219,7 @@ def test_svd_decoder(fmt, chunk_size, rank):
     reason="SVD requires CUDA",
 )
 def test_svd_unmatched_size(fmt):
-    """Test SVD with non-standard chunk sizes."""
+    """Test SVD with non-standard chunk sizes - single layer."""
     chunk_size = 256
     rank = 1024
     config = LMCacheEngineConfig.from_defaults(chunk_size=chunk_size)
@@ -232,8 +236,9 @@ def test_svd_unmatched_size(fmt):
     serializer = SVDSerializer(config, metadata, torch.bfloat16)
     deserializer = SVDDeserializer(config, metadata, torch.bfloat16)
     
-    # Test with smaller chunk size than configured
-    kv = to_blob(generate_kv_cache(chunk_size - 20, fmt, "cuda"))
+    # Test with smaller chunk size than configured - single layer
+    kv_full = to_blob(generate_kv_cache(chunk_size - 20, fmt, "cuda"))
+    kv = kv_full[0]  # Take first layer
     output = serializer.to_bytes(kv)
     
     decoded_kv = deserializer.from_bytes(output)

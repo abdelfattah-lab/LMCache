@@ -87,43 +87,40 @@ def encode_function(
     head_size: int,
 ) -> List[Dict[str, torch.Tensor]]:
     """
-    Encode KV cache tensor using SVD compression.
+    Encode single-layer KV cache tensor using SVD compression.
     
-    This is the main encoding function that processes the full KV cache tensor
-    and compresses each layer and key/value type separately.
+    This function processes a single layer's KV cache, compressing key and value separately.
     
     Args:
-        kv: Input tensor of shape [num_layers, 2, num_tokens, num_heads, head_size]
-            where dimension 1 represents [key, value]
+        kv: Input tensor of shape [2, num_tokens, num_heads, head_size]
+            where dimension 0 represents [key, value]
         rank: Number of singular values to keep for compression
         num_heads: Number of attention heads
         head_size: Size of each attention head
         
     Returns:
-        List of dictionaries, one per (layer, kv_type) combination.
+        List of 2 dictionaries, one for key and one for value.
         Each dictionary contains compressed SVD components (U, S, Vt).
     """
-    num_layers = kv.shape[0]
-    kv_type = kv.shape[1]  # Should be 2 (key and value)
+    kv_type = kv.shape[0]  # Should be 2 (key and value)
     
     if kv_type != 2:
         raise ValueError(f"Expected kv_type=2 (key, value), got {kv_type}")
     
     compressed_data = []
     
-    # Process each layer and kv_type (key/value) separately
-    for layer_idx in range(num_layers):
-        for kv_idx in range(kv_type):  # 0=key, 1=value
-            # Extract single layer+type: [num_tokens, num_heads, head_size]
-            layer_tensor = kv[layer_idx, kv_idx, :, :, :]
-            
-            # Compress using SVD
-            svd_components = svd_encode_single_layer(layer_tensor, rank)
-            compressed_data.append(svd_components)
+    # Process key and value separately
+    for kv_idx in range(kv_type):  # 0=key, 1=value
+        # Extract key or value: [num_tokens, num_heads, head_size]
+        kv_tensor = kv[kv_idx, :, :, :]
+        
+        # Compress using SVD
+        svd_components = svd_encode_single_layer(kv_tensor, rank)
+        compressed_data.append(svd_components)
     
     logger.debug(
-        f"SVD encode_function: Compressed {num_layers} layers, {kv_type} types, "
-        f"rank={rank}, output={len(compressed_data)} components"
+        f"SVD encode_function: Compressed single layer with {kv_type} types (key, value), "
+        f"rank={rank}"
     )
     
     return compressed_data
@@ -173,10 +170,11 @@ class SVDSerializer(Serializer):
     @_lmcache_nvtx_annotate
     def to_bytes(self, tensor: torch.Tensor) -> bytes:
         """
-        Serialize a KV cache tensor using SVD compression.
+        Serialize a single-layer KV cache tensor using SVD compression.
         
         Args:
-            tensor: Input tensor of shape [num_layers, 2, num_tokens, num_heads, head_size]
+            tensor: Input tensor of shape [2, num_tokens, num_heads, head_size]
+                   where dimension 0 represents [key, value]
         
         Returns:
             Compressed bytes
@@ -193,8 +191,7 @@ class SVDSerializer(Serializer):
         result = {
             'compressed_data': compressed_data,
             'metadata': {
-                'num_layers': tensor.shape[0],
-                'num_tokens': tensor.shape[2],
+                'num_tokens': tensor.shape[1],
                 'num_heads': self.num_heads,
                 'head_size': self.head_size,
                 'rank': self.rank,

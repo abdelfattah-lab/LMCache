@@ -123,12 +123,31 @@ class SVDSerializer(Serializer):
             tensor = tensor[:, layer_id:layer_id+1, :, :, :]
             num_layers = 1
 
-        # Permute to [num_layers, 2, num_tokens, num_heads, head_size] for encode_function
+        # Permute to [num_layers, 2, num_tokens, num_heads, head_size]
         tensor = tensor.permute([1, 0, 2, 3, 4])
+        
+        # In layerwise mode, we should only have 1 layer
+        # If we have more than 1 layer, extract the requested layer
+        if num_layers > 1:
+            if layer_id is not None:
+                logger.warning(
+                    f"Layerwise mode: Received tensor with {num_layers} layers but layer_id={layer_id}. "
+                    f"Extracting layer {layer_id} from multi-layer tensor."
+                )
+                tensor = tensor[layer_id:layer_id+1, :, :, :, :]  # [1, 2, num_tokens, num_heads, head_size]
+                num_layers = 1
+            else:
+                raise ValueError(
+                    f"Single-layer SVD received {num_layers} layers but no layer_id specified. "
+                    f"Cannot determine which layer to compress."
+                )
+        
+        # Extract single layer: [2, num_tokens, num_heads, head_size]
+        single_layer = tensor[0]  # Remove layer dimension
 
-        # Use the encoder function to perform SVD compression
+        # Use the encoder function to perform SVD compression (single layer)
         compressed_data = encode_function(
-            tensor,
+            single_layer,
             self.rank,
             self.kv_shape[-2],  # num_heads
             self.kv_shape[-1],  # head_size
@@ -139,8 +158,6 @@ class SVDSerializer(Serializer):
             'compressed_data': compressed_data,
             'metadata': {
                 'original_shape': list(original_shape),
-                'kv_type': kv_type,
-                'num_layers': num_layers,
                 'num_tokens': num_tokens,
                 'num_heads': self.kv_shape[-2],
                 'head_size': self.kv_shape[-1],
