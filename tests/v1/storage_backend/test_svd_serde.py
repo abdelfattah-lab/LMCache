@@ -134,7 +134,7 @@ def test_v1_svd_compression_ratio(chunk_size):
     
     # Calculate sizes
     original_size = kv_layerwise.numel() * kv_layerwise.element_size()
-    compressed_size = len(compressed_obj.bytes_data)
+    compressed_size = len(compressed_obj.byte_array)
     compression_ratio = original_size / compressed_size
     
     print(f"Original: {original_size} bytes, Compressed: {compressed_size} bytes, "
