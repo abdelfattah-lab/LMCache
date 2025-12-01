@@ -843,11 +843,20 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
         num_tokens = len(slot_mapping_full)
 
         if self.use_gpu:
-            buffer_shape = self.get_shape(num_tokens)
+            # Allocate a contiguous buffer
+            # For non-MLA: [2, num_tokens, hidden_dim] (KV_2TD)
+            # For MLA: [num_tokens, hidden_dim] (KV_MLA_FMT) - MLA structure is simpler
+            if self.use_mla:
+                buffer_shape_transposed = torch.Size([num_tokens, self.hidden_dim_size])
+                fmt = MemoryFormat.KV_MLA_FMT
+            else:
+                buffer_shape_transposed = torch.Size([2, num_tokens, self.hidden_dim_size])
+                fmt = MemoryFormat.KV_2TD
+
             assert self.gpu_buffer_allocator is not None
             tmp_gpu_buffer_obj: Optional[MemoryObj] = (
                 self.gpu_buffer_allocator.allocate(
-                    buffer_shape, self.dtype, MemoryFormat.KV_T2D
+                    buffer_shape_transposed, self.dtype, fmt
                 )
             )
             assert tmp_gpu_buffer_obj is not None, (
@@ -887,31 +896,45 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                             f"got {memory_obj.metadata.fmt}"
                         )
                     if self.use_gpu:
-                        # Buffer shape: [num_tokens, 2, hidden_dim] (KV_T2D)
-                        # Memory object shape: [chunk_tokens, 2, hidden_dim] (KV_T2D)
-                        # where chunk_tokens = end - start
-                        # Shapes match, no transpose needed
-                        tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :, :].copy_(
-                            memory_obj.tensor, non_blocking=True
-                        )
+                        if self.use_mla:
+                            # For MLA: Buffer [N, H], Memory [N, H]. Direct copy.
+                            tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :].copy_(
+                                memory_obj.tensor, non_blocking=True
+                            )
+                        else:
+                            # For non-MLA: Buffer [2, N, H], Memory [N, 2, H]. Permute needed.
+                            tmp_gpu_buffer_obj.tensor[:, start - offset : end - offset, :].copy_(
+                                memory_obj.tensor.permute(1, 0, 2), non_blocking=True
+                            )
                     else:
-                        # Convert from [chunk_tokens, 2, hidden_dim] to [2, chunk_tokens, hidden_dim] for C++ ops
-                        memory_obj_tensor_2td = memory_obj.tensor.permute([1, 0, 2])
-                        lmc_ops.single_layer_kv_transfer(
-                            memory_obj_tensor_2td,
-                            self.kvcaches[layer_id],
-                            slot_mapping_full,
-                            False,
-                            True,
-                            self.vllm_two_major,
-                            self.use_mla,
-                        )
+                        if self.use_mla:
+                            # MLA direct transfer
+                            lmc_ops.single_layer_kv_transfer(
+                                memory_obj.tensor,
+                                self.kvcaches[layer_id],
+                                slot_mapping_full,
+                                False,
+                                True,
+                                self.vllm_two_major,
+                                self.use_mla,
+                            )
+                        else:
+                            # Non-MLA: convert T2D to 2TD
+                            memory_obj_tensor_2td = memory_obj.tensor.permute([1, 0, 2])
+                            lmc_ops.single_layer_kv_transfer(
+                                memory_obj_tensor_2td,
+                                self.kvcaches[layer_id],
+                                slot_mapping_full,
+                                False,
+                                True,
+                                self.vllm_two_major,
+                                self.use_mla,
+                            )
 
                 if self.use_gpu:
-                    # Convert from [num_tokens, 2, hidden_dim] to [2, num_tokens, hidden_dim] for C++ ops
-                    tmp_gpu_buffer_obj_tensor_2td = tmp_gpu_buffer_obj.tensor.permute([1, 0, 2])
+                    # tmp_gpu_buffer_obj is now correctly populated
                     lmc_ops.single_layer_kv_transfer(
-                        tmp_gpu_buffer_obj_tensor_2td,
+                        tmp_gpu_buffer_obj.tensor,
                         self.kvcaches[layer_id],
                         slot_mapping_full,
                         False,
@@ -989,11 +1012,20 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
         num_tokens = len(slot_mapping_full)
 
         if self.use_gpu:
-            buffer_shape = self.get_shape(num_tokens)
+            # Allocate contiguous buffer
+            # For non-MLA: [2, N, H]
+            # For MLA: [N, H]
+            if self.use_mla:
+                buffer_shape_transposed = torch.Size([num_tokens, self.hidden_dim_size])
+                fmt = MemoryFormat.KV_MLA_FMT
+            else:
+                buffer_shape_transposed = torch.Size([2, num_tokens, self.hidden_dim_size])
+                fmt = MemoryFormat.KV_2TD
+
             assert self.gpu_buffer_allocator is not None
             tmp_gpu_buffer_obj: Optional[MemoryObj] = (
                 self.gpu_buffer_allocator.allocate(
-                    buffer_shape, self.dtype, MemoryFormat.KV_T2D
+                    buffer_shape_transposed, self.dtype, fmt
                 )
             )
             assert tmp_gpu_buffer_obj is not None, (
@@ -1014,10 +1046,9 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                     f"num_memory_objs={len(memory_objs_layer)}, num_starts={len(starts)}, num_ends={len(ends)}"
                 )
                 if self.use_gpu:
-                    # Convert from [num_tokens, 2, hidden_dim] to [2, num_tokens, hidden_dim] for C++ ops
-                    tmp_gpu_buffer_obj_tensor_2td = tmp_gpu_buffer_obj.tensor.permute([1, 0, 2])
+                    # tmp_gpu_buffer_obj is contiguous.
                     lmc_ops.single_layer_kv_transfer(
-                        tmp_gpu_buffer_obj_tensor_2td,
+                        tmp_gpu_buffer_obj.tensor,
                         self.kvcaches[layer_id],
                         slot_mapping_full,
                         True,
@@ -1035,25 +1066,42 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                         f"shape={memory_obj.tensor.shape}, start={start}, end={end}, chunk_tokens={end-start}"
                     )
                     if self.use_gpu:
-                        # Buffer shape: [num_tokens, 2, hidden_dim] (KV_T2D)
-                        # Memory object shape: [chunk_tokens, 2, hidden_dim] (KV_T2D)
-                        # Shapes match, no transpose needed
-                        memory_obj.tensor.copy_(
-                            tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :, :],
-                            non_blocking=True,
-                        )
+                        if self.use_mla:
+                            # MLA: Direct copy [N, H] -> [N, H]
+                            memory_obj.tensor.copy_(
+                                tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :],
+                                non_blocking=True,
+                            )
+                        else:
+                            # Non-MLA: Buffer [2, N, H] -> Memory [N, 2, H]. Permute needed.
+                            memory_obj.tensor.copy_(
+                                tmp_gpu_buffer_obj.tensor[:, start - offset : end - offset, :].permute(1, 0, 2),
+                                non_blocking=True,
+                            )
                     else:
-                        # Convert from [chunk_tokens, 2, hidden_dim] to [2, chunk_tokens, hidden_dim] for C++ ops
-                        memory_obj_tensor_2td = memory_obj.tensor.permute([1, 0, 2])
-                        lmc_ops.single_layer_kv_transfer(
-                            memory_obj_tensor_2td,
-                            self.kvcaches[layer_id],
-                            slot_mapping[start:end],
-                            True,
-                            True,
-                            self.vllm_two_major,
-                            self.use_mla,
-                        )
+                        if self.use_mla:
+                            # MLA direct transfer
+                            lmc_ops.single_layer_kv_transfer(
+                                memory_obj.tensor,
+                                self.kvcaches[layer_id],
+                                slot_mapping[start:end],
+                                True,
+                                True,
+                                self.vllm_two_major,
+                                self.use_mla,
+                            )
+                        else:
+                            # Non-MLA: Convert from [chunk_tokens, 2, H] to [2, chunk_tokens, H] for C++ ops
+                            memory_obj_tensor_2td = memory_obj.tensor.permute([1, 0, 2])
+                            lmc_ops.single_layer_kv_transfer(
+                                memory_obj_tensor_2td,
+                                self.kvcaches[layer_id],
+                                slot_mapping[start:end],
+                                True,
+                                True,
+                                self.vllm_two_major,
+                                self.use_mla,
+                            )
                     # Set metadata format
                     if self.use_mla:
                         memory_obj.metadata.fmt = MemoryFormat.KV_MLA_FMT
