@@ -12,7 +12,7 @@ from lmcache.logging import init_logger
 from lmcache.observability import LMCStatsMonitor, PrometheusLogger
 from lmcache.utils import CacheEngineKey, _lmcache_nvtx_annotate
 from lmcache.v1.config import LMCacheEngineConfig
-from lmcache.v1.memory_management import MemoryFormat, MemoryObj
+from lmcache.v1.memory_management import MemoryObj
 from lmcache.v1.storage_backend.abstract_backend import StorageBackendInterface
 from lmcache.v1.storage_backend.connector import CreateConnector
 from lmcache.v1.storage_backend.connector.base_connector import RemoteConnector
@@ -215,6 +215,7 @@ class RemoteBackend(StorageBackendInterface):
         # Extract layer_id from key if it's a LayerCacheEngineKey
         layer_id = None
         from lmcache.utils import LayerCacheEngineKey
+
         if isinstance(key, LayerCacheEngineKey):
             layer_id = key.layer_id
 
@@ -259,9 +260,12 @@ class RemoteBackend(StorageBackendInterface):
                 # Extract layer_id from key if it's a LayerCacheEngineKey
                 layer_id = None
                 from lmcache.utils import LayerCacheEngineKey
+
                 if isinstance(key, LayerCacheEngineKey):
                     layer_id = key.layer_id
-                compressed_memory_objs.append(self.serializer.serialize(memory_obj, layer_id=layer_id))
+                compressed_memory_objs.append(
+                    self.serializer.serialize(memory_obj, layer_id=layer_id)
+                )
                 memory_obj.ref_count_down()
 
             future = asyncio.run_coroutine_threadsafe(
@@ -316,9 +320,12 @@ class RemoteBackend(StorageBackendInterface):
         # Extract layer_id from LayerCacheEngineKey if present
         layer_id = None
         from lmcache.utils import LayerCacheEngineKey
+
         if isinstance(key, LayerCacheEngineKey):
             layer_id = key.layer_id
-        decompressed_memory_obj = self.deserializer.deserialize(memory_obj, layer_id=layer_id)
+        decompressed_memory_obj = self.deserializer.deserialize(
+            memory_obj, layer_id=layer_id
+        )
         t3 = time.perf_counter()
         logger.debug(
             f"Get takes {(t2 - t1) * 1000:.6f} msec, "
@@ -404,6 +411,7 @@ class RemoteBackend(StorageBackendInterface):
                 # Extract layer_id from LayerCacheEngineKey if present
                 layer_id = None
                 from lmcache.utils import LayerCacheEngineKey
+
                 if isinstance(key, LayerCacheEngineKey):
                     layer_id = key.layer_id
                 decompressed_memory_objs.append(
@@ -487,6 +495,7 @@ class RemoteBackend(StorageBackendInterface):
                 # Extract layer_id from LayerCacheEngineKey if present
                 layer_id = None
                 from lmcache.utils import LayerCacheEngineKey
+
                 if isinstance(key, LayerCacheEngineKey):
                     layer_id = key.layer_id
                 decompressed_memory_objs.append(

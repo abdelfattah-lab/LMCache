@@ -657,10 +657,8 @@ class LMCacheConnectorV1Impl:
         self.layerwise_retrievers: list[
             Generator[Optional[torch.Tensor], None, None]
         ] = []
-        self.layerwise_storers: list[
-            Generator[None, None, None]
-        ] = []
-        
+        self.layerwise_storers: list[Generator[None, None, None]] = []
+
         self._stats_monitor = LMCStatsMonitor.GetOrCreate()
         if role == KVConnectorRole.SCHEDULER:
             self.lmcache_engine: Optional[LMCacheEngine] = None
@@ -1252,7 +1250,9 @@ class LMCacheConnectorV1Impl:
                     # In Python 3.7+, StopIteration from generators is converted to RuntimeError
                     # This can happen if save_kv_layer was called more times than expected
                     # or if the generator yielded fewer times than expected
-                    if isinstance(e, RuntimeError) and "generator raised StopIteration" not in str(e):
+                    if isinstance(
+                        e, RuntimeError
+                    ) and "generator raised StopIteration" not in str(e):
                         # Re-raise if it's a different RuntimeError
                         raise
                     logger.debug(
@@ -1310,7 +1310,7 @@ class LMCacheConnectorV1Impl:
             tokens_to_store = len(token_ids) - skip_leading_tokens
             cumulative_tokens = len(token_ids)
             is_last_prefill = request.is_last_prefill
-            
+
             # Make log message clearer: show chunk size and indicate if incremental
             # The "cumulative tokens" represents tokens processed so far during chunked prefill
             if is_last_prefill:
@@ -1331,7 +1331,7 @@ class LMCacheConnectorV1Impl:
                     skip_leading_tokens,
                     request.req_id,
                 )
-            
+
             if is_last_prefill:
                 if request.disagg_spec:
                     request.disagg_spec.is_last_prefill = True

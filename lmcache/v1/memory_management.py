@@ -39,11 +39,11 @@ class MemoryFormat(Enum):
     """[2, num_layers, num_tokens, hidden_dim]
     """
     KV_2LTD = auto()
-    
+
     """[num_tokens, 2, hidden_dim]
     """
     KV_T2D = auto()
-    
+
     """[2, num_tokens, hidden_dim]
     """
     KV_2TD = auto()

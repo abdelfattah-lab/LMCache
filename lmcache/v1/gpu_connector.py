@@ -850,7 +850,9 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                 buffer_shape_transposed = torch.Size([num_tokens, self.hidden_dim_size])
                 fmt = MemoryFormat.KV_MLA_FMT
             else:
-                buffer_shape_transposed = torch.Size([2, num_tokens, self.hidden_dim_size])
+                buffer_shape_transposed = torch.Size(
+                    [2, num_tokens, self.hidden_dim_size]
+                )
                 fmt = MemoryFormat.KV_2TD
 
             assert self.gpu_buffer_allocator is not None
@@ -882,7 +884,7 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                     logger.info(
                         f"VLLMPagedMemLayerwiseGPUConnector.batched_to_gpu: RETRIEVING layer_id={layer_id}, "
                         f"format={memory_obj.metadata.fmt}, shape={memory_obj.tensor.shape if memory_obj.tensor is not None else 'None'}, "
-                        f"start={start}, end={end}, chunk_tokens={end-start}"
+                        f"start={start}, end={end}, chunk_tokens={end - start}"
                     )
                     # Validate memory format
                     if self.use_mla:
@@ -898,12 +900,14 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                     if self.use_gpu:
                         if self.use_mla:
                             # For MLA: Buffer [N, H], Memory [N, H]. Direct copy.
-                            tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :].copy_(
-                                memory_obj.tensor, non_blocking=True
-                            )
+                            tmp_gpu_buffer_obj.tensor[
+                                start - offset : end - offset, :
+                            ].copy_(memory_obj.tensor, non_blocking=True)
                         else:
                             # For non-MLA: Buffer [2, N, H], Memory [N, 2, H]. Permute needed.
-                            tmp_gpu_buffer_obj.tensor[:, start - offset : end - offset, :].copy_(
+                            tmp_gpu_buffer_obj.tensor[
+                                :, start - offset : end - offset, :
+                            ].copy_(
                                 memory_obj.tensor.permute(1, 0, 2), non_blocking=True
                             )
                     else:
@@ -1019,7 +1023,9 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                 buffer_shape_transposed = torch.Size([num_tokens, self.hidden_dim_size])
                 fmt = MemoryFormat.KV_MLA_FMT
             else:
-                buffer_shape_transposed = torch.Size([2, num_tokens, self.hidden_dim_size])
+                buffer_shape_transposed = torch.Size(
+                    [2, num_tokens, self.hidden_dim_size]
+                )
                 fmt = MemoryFormat.KV_2TD
 
             assert self.gpu_buffer_allocator is not None
@@ -1063,19 +1069,23 @@ class VLLMPagedMemLayerwiseGPUConnector(GPUConnectorInterface):
                     logger.debug(
                         f"VLLMPagedMemLayerwiseGPUConnector.batched_from_gpu: Copying to memory_obj "
                         f"layer_id={layer_id}, format={memory_obj.metadata.fmt}, "
-                        f"shape={memory_obj.tensor.shape}, start={start}, end={end}, chunk_tokens={end-start}"
+                        f"shape={memory_obj.tensor.shape}, start={start}, end={end}, chunk_tokens={end - start}"
                     )
                     if self.use_gpu:
                         if self.use_mla:
                             # MLA: Direct copy [N, H] -> [N, H]
                             memory_obj.tensor.copy_(
-                                tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :],
+                                tmp_gpu_buffer_obj.tensor[
+                                    start - offset : end - offset, :
+                                ],
                                 non_blocking=True,
                             )
                         else:
                             # Non-MLA: Buffer [2, N, H] -> Memory [N, 2, H]. Permute needed.
                             memory_obj.tensor.copy_(
-                                tmp_gpu_buffer_obj.tensor[:, start - offset : end - offset, :].permute(1, 0, 2),
+                                tmp_gpu_buffer_obj.tensor[
+                                    :, start - offset : end - offset, :
+                                ].permute(1, 0, 2),
                                 non_blocking=True,
                             )
                     else:
@@ -1460,9 +1470,9 @@ class SGLangLayerwiseGPUConnector(GPUConnectorInterface):
                 if self.use_gpu:
                     # Buffer shape: [num_tokens, 2, hidden_dim] (KV_T2D)
                     # Memory object shape: [chunk_tokens, 2, hidden_dim] (KV_T2D)
-                    tmp_gpu_buffer_obj.tensor[start - offset : end - offset, :, :].copy_(
-                        memory_obj.tensor, non_blocking=True
-                    )
+                    tmp_gpu_buffer_obj.tensor[
+                        start - offset : end - offset, :, :
+                    ].copy_(memory_obj.tensor, non_blocking=True)
                 else:
                     # Convert from [chunk_tokens, 2, hidden_dim] to [2, chunk_tokens, hidden_dim] for C++ ops
                     memory_obj_tensor_2td = memory_obj.tensor.permute([1, 0, 2])
@@ -1569,7 +1579,9 @@ class SGLangLayerwiseGPUConnector(GPUConnectorInterface):
             if self.use_gpu:
                 t, h, d = self.kvcaches[0][layer_id].shape
                 # Convert from [num_tokens, 2, hidden_dim] to [2, num_tokens, hidden_dim] for C++ ops
-                tmp_gpu_buffer_obj_tensor_2td = tmp_gpu_buffer_obj.tensor.permute([1, 0, 2])
+                tmp_gpu_buffer_obj_tensor_2td = tmp_gpu_buffer_obj.tensor.permute(
+                    [1, 0, 2]
+                )
                 lmc_ops.single_layer_kv_transfer_sgl(
                     tmp_gpu_buffer_obj_tensor_2td,
                     self.kvcaches[0][layer_id].view(t, 1, h, d),
@@ -1590,7 +1602,9 @@ class SGLangLayerwiseGPUConnector(GPUConnectorInterface):
                     # Memory object shape: [chunk_tokens, 2, hidden_dim] (KV_T2D)
                     chunk_len = memory_obj.tensor.shape[0]
                     memory_obj.tensor.copy_(
-                        tmp_gpu_buffer_obj.tensor[start_idx : start_idx + chunk_len, :, :],
+                        tmp_gpu_buffer_obj.tensor[
+                            start_idx : start_idx + chunk_len, :, :
+                        ],
                         non_blocking=True,
                     )
                     start_idx += chunk_len

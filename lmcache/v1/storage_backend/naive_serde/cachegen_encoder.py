@@ -42,7 +42,9 @@ class CacheGenSerializer(Serializer):
 
     # TODO(Jiayi): A lot of memory copies can be avoided in this function.
     @_lmcache_nvtx_annotate
-    def serialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> BytesBufferMemoryObj:
+    def serialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> BytesBufferMemoryObj:
         """
         Serialize a KV_2LTD MemoryObj to CACHEGEN_BINARY MemoryObj.
 
@@ -57,7 +59,7 @@ class CacheGenSerializer(Serializer):
         # serialization inside gpu connector.
         assert memory_obj.tensor is not None
         tensor = memory_obj.tensor.cuda()
-        
+
         logger.info(
             f"CacheGenSerializer.serialize: SAVING with format={memory_obj.metadata.fmt}, "
             f"shape={tensor.shape}, layer_id={layer_id}, "
@@ -91,7 +93,7 @@ class CacheGenSerializer(Serializer):
         # 1. Multi-layer format: [2, num_layers, num_tokens, hidden_size] (4 dims) - from non-layerwise connectors
         # 2. Layerwise format: [num_tokens, 2, hidden_size] (3 dims) - from layerwise connectors (KV_T2D format)
         num_dims = len(tensor.shape)
-        
+
         if num_dims == 3:
             # Layerwise format: single layer tensor
             # KV_T2D format should be [num_tokens, 2, hidden_size]
@@ -127,7 +129,9 @@ class CacheGenSerializer(Serializer):
         # At this point, tensor should be [2, num_layers, num_tokens, hidden_size]
         # Validate that hidden_size can be split into num_heads * head_size
         hidden_size = tensor.shape[-1]
-        expected_hidden_size = self.kv_shape[-2] * self.kv_shape[-1]  # num_heads * head_size
+        expected_hidden_size = (
+            self.kv_shape[-2] * self.kv_shape[-1]
+        )  # num_heads * head_size
         if hidden_size != expected_hidden_size:
             raise ValueError(
                 f"Tensor hidden_size ({hidden_size}) does not match expected "
@@ -146,7 +150,7 @@ class CacheGenSerializer(Serializer):
         [num_layers, 2, num_tokens, num_heads, head_size] """
         ntokens = tensor.shape[2]
         num_layers = tensor.shape[0]
-        
+
         # In layerwise mode, we should only have 1 layer
         # If we have more than 1 layer, this is a bug - the memory object should contain only one layer
         if layer_id is not None and num_layers > 1:
@@ -157,18 +161,20 @@ class CacheGenSerializer(Serializer):
                 f"Expected single layer tensor for layerwise mode."
             )
             # Extract only the requested layer
-            tensor = tensor[layer_id:layer_id+1, :, :, :, :]  # [1, 2, num_tokens, num_heads, head_size]
+            tensor = tensor[
+                layer_id : layer_id + 1, :, :, :, :
+            ]  # [1, 2, num_tokens, num_heads, head_size]
             num_layers = 1
             logger.warning(
                 f"Extracting layer {layer_id} from multi-layer tensor. "
                 f"New tensor shape: {tensor.shape}"
             )
-        
+
         # For layerwise mode (single layer), slice bins to the specific layer
         # If layer_id is provided, use bins for that layer; otherwise use layer 0
         if num_layers == 1 and layer_id is not None:
-            key_bins_to_use = self.key_bins[layer_id:layer_id+1]  # Shape [1]
-            value_bins_to_use = self.value_bins[layer_id:layer_id+1]  # Shape [1]
+            key_bins_to_use = self.key_bins[layer_id : layer_id + 1]  # Shape [1]
+            value_bins_to_use = self.value_bins[layer_id : layer_id + 1]  # Shape [1]
         elif num_layers == 1:
             # Single layer but no layer_id provided, use layer 0's bins as fallback
             key_bins_to_use = self.key_bins[0:1]  # Shape [1]
@@ -177,7 +183,7 @@ class CacheGenSerializer(Serializer):
             # Multi-layer: use bins for all layers
             key_bins_to_use = self.key_bins[:num_layers]  # Shape [num_layers]
             value_bins_to_use = self.value_bins[:num_layers]  # Shape [num_layers]
-        
+
         output_dict = encode_function(
             tensor,
             self.cachegen_config,

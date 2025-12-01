@@ -11,11 +11,15 @@ class NaiveSerializer(Serializer):
     def __init__(self):
         pass
 
-    def serialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def serialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         memory_obj.ref_count_up()
         return memory_obj
 
 
 class NaiveDeserializer(Deserializer):
-    def deserialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def deserialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         return memory_obj

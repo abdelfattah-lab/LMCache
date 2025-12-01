@@ -64,7 +64,9 @@ class CacheGenDeserializer(Deserializer):
 
     # TODO(Jiayi): A lot of memory copies can be avoided in this function.
     @_lmcache_nvtx_annotate
-    def deserialize(self, buffer_memory_obj: BytesBufferMemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def deserialize(
+        self, buffer_memory_obj: BytesBufferMemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         logger.info(
             f"CacheGenDeserializer.deserialize: RETRIEVING with layer_id={layer_id}, "
             f"buffer_size={len(buffer_memory_obj.byte_array)} bytes"
@@ -139,8 +141,12 @@ class CacheGenDeserializer(Deserializer):
                     f"Shape: {kv_chunk.shape}"
                 )
             # Extract the specific layer: [2, nlayers, ntokens, hidden_dim] -> [2, ntokens, hidden_dim] -> [ntokens, 2, hidden_dim]
-            kv_chunk = kv_chunk[:, layer_id, :, :]  # Select layer_id from dimension 1 -> [2, ntokens, hidden_dim]
-            kv_chunk = kv_chunk.permute([1, 0, 2])  # Permute to [ntokens, 2, hidden_dim]
+            kv_chunk = kv_chunk[
+                :, layer_id, :, :
+            ]  # Select layer_id from dimension 1 -> [2, ntokens, hidden_dim]
+            kv_chunk = kv_chunk.permute(
+                [1, 0, 2]
+            )  # Permute to [ntokens, 2, hidden_dim]
             output_fmt = MemoryFormat.KV_T2D
             logger.debug(
                 f"Extracted layer {layer_id} from multi-layer data (nlayers={nlayers}). "
@@ -148,8 +154,12 @@ class CacheGenDeserializer(Deserializer):
             )
         elif nlayers == 1:
             # Single layer already: [2, 1, ntokens, hidden_dim] -> [2, ntokens, hidden_dim] -> [ntokens, 2, hidden_dim]
-            kv_chunk = kv_chunk.squeeze(1)  # Remove the layer dimension (dimension 1) -> [2, ntokens, hidden_dim]
-            kv_chunk = kv_chunk.permute([1, 0, 2])  # Permute to [ntokens, 2, hidden_dim]
+            kv_chunk = kv_chunk.squeeze(
+                1
+            )  # Remove the layer dimension (dimension 1) -> [2, ntokens, hidden_dim]
+            kv_chunk = kv_chunk.permute(
+                [1, 0, 2]
+            )  # Permute to [ntokens, 2, hidden_dim]
             output_fmt = MemoryFormat.KV_T2D
         else:
             # Multi-layer mode: keep KV_2LTD format [2, nlayers, ntokens, hidden_dim]

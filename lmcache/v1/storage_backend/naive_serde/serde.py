@@ -9,7 +9,9 @@ from lmcache.v1.memory_management import MemoryObj
 
 class Serializer(metaclass=abc.ABCMeta):
     @abc.abstractmethod
-    def serialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def serialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         """
         Serialize/compress the memory object.
 
@@ -25,7 +27,9 @@ class Serializer(metaclass=abc.ABCMeta):
 
 class Deserializer(metaclass=abc.ABCMeta):
     @abc.abstractmethod
-    def deserialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def deserialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         """
         Deserialize/decompress the memory object.
 

@@ -11,7 +11,9 @@ class KIVISerializer(Serializer):
     def __init__(self):
         pass
 
-    def serialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def serialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         # TODO(Yuhan)
         return memory_obj
 
@@ -20,6 +22,8 @@ class KIVIDeserializer(Deserializer):
     def __init__(self):
         pass
 
-    def deserialize(self, memory_obj: MemoryObj, layer_id: Optional[int] = None) -> MemoryObj:
+    def deserialize(
+        self, memory_obj: MemoryObj, layer_id: Optional[int] = None
+    ) -> MemoryObj:
         # TODO(Yuhan)
         return memory_obj
