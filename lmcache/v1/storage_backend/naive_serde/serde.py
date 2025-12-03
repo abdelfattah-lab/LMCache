@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Standard
+from typing import List
 import abc
 
 # First Party
@@ -19,6 +20,18 @@ class Serializer(metaclass=abc.ABCMeta):
             MemoryObj: the serialized/compressed memory object.
         """
         raise NotImplementedError
+
+    def serialize_batch(self, memory_objs: List[MemoryObj]) -> List[MemoryObj]:
+        """
+        Serialize/compress a batch of memory objects.
+
+        Input:
+            memory_objs: the list of memory objects to be serialized/compressed.
+
+        Returns:
+            List[MemoryObj]: the list of serialized/compressed memory objects.
+        """
+        return [self.serialize(memory_obj) for memory_obj in memory_objs]
 
 
 class Deserializer(metaclass=abc.ABCMeta):

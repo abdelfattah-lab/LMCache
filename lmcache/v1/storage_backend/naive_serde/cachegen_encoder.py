@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
+# Standard
+from typing import List
+
 # Third Party
 import torch
 
@@ -82,3 +85,11 @@ class CacheGenSerializer(Serializer):
         )
 
         return BytesBufferMemoryObj(output_dict.to_bytes())
+
+    @_lmcache_nvtx_annotate
+    def serialize_batch(self, memory_objs: List[MemoryObj]) -> List[MemoryObj]:
+        """
+        Serialize/compress a batch of memory objects.
+        """
+        logger.info(f"Serializing batch of {len(memory_objs)} memory objects")
+        return [self.serialize(memory_obj) for memory_obj in memory_objs]
