@@ -21,7 +21,6 @@ class Serializer(metaclass=abc.ABCMeta):
         """
         raise NotImplementedError
 
-    @abc.abstractmethod
     def serialize_batch(self, memory_objs: List[MemoryObj]) -> List[MemoryObj]:
         """
         Serialize/compress a batch of memory objects.
@@ -32,7 +31,7 @@ class Serializer(metaclass=abc.ABCMeta):
         Returns:
             List[MemoryObj]: the list of serialized/compressed memory objects.
         """
-        raise NotImplementedError
+        return [self.serialize(memory_obj) for memory_obj in memory_objs]
 
 
 class Deserializer(metaclass=abc.ABCMeta):
