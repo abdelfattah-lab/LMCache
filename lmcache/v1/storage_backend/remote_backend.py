@@ -232,7 +232,6 @@ class RemoteBackend(StorageBackendInterface):
         with self.lock:
             self.put_tasks.difference_update(keys)
 
-
     def batched_submit_put_task(
         self,
         keys: Sequence[CacheEngineKey],
