@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
-# Third Party
+# Standard
 from typing import List
 
+# Third Party
 import torch
 
 # First Party
