@@ -35,18 +35,19 @@ logger = init_logger(__name__)
 
 class MemoryFormat(Enum):
     UNDEFINED = 0
+
     """[2, num_layers, num_tokens, hidden_dim]
     """
-    # KV_BLOB = 1
     KV_2LTD = auto()
+
     """[num_tokens, 2, hidden_dim]
     """
-    # LAYER_KV_BLOB = 2
     KV_T2D = auto()
+
     """[2, num_tokens, hidden_dim]
     """
-
     KV_2TD = auto()
+
     """Compressed binary array format
     """
     BINARY = auto()
@@ -410,8 +411,8 @@ class TensorMemoryObj(MemoryObj):
             self.meta.ref_count -= 1
             if self.meta.ref_count < 0:
                 logger.warning(
-                    f"Ref count of MemoryObj {self.meta.address}"
-                    f"is negative: {self.meta.ref_count}."
+                    f"Ref count of MemoryObj {self.meta.address} "
+                    f"is negative: {self.meta.ref_count}. "
                     "Double free occurred somewhere."
                     "Setting ref count back to 0 as a hack but please find the bug."
                 )

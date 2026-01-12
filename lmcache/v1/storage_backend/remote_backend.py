@@ -212,7 +212,14 @@ class RemoteBackend(StorageBackendInterface):
         with self.lock:
             self.put_tasks.add(key)
 
-        compressed_memory_obj = self.serializer.serialize(memory_obj)
+        # Extract layer_id from key if it's a LayerCacheEngineKey
+        layer_id = None
+        from lmcache.utils import LayerCacheEngineKey
+
+        if isinstance(key, LayerCacheEngineKey):
+            layer_id = key.layer_id
+
+        compressed_memory_obj = self.serializer.serialize(memory_obj, layer_id=layer_id)
         memory_obj.ref_count_down()
 
         # NOTE: No need to do error handling here
@@ -248,9 +255,17 @@ class RemoteBackend(StorageBackendInterface):
 
             compressed_memory_objs = []
 
-            for memory_obj in memory_objs:
+            for key, memory_obj in zip(keys, memory_objs, strict=False):
                 memory_obj.ref_count_up()
-                compressed_memory_objs.append(self.serializer.serialize(memory_obj))
+                # Extract layer_id from key if it's a LayerCacheEngineKey
+                layer_id = None
+                from lmcache.utils import LayerCacheEngineKey
+
+                if isinstance(key, LayerCacheEngineKey):
+                    layer_id = key.layer_id
+                compressed_memory_objs.append(
+                    self.serializer.serialize(memory_obj, layer_id=layer_id)
+                )
                 memory_obj.ref_count_down()
 
             future = asyncio.run_coroutine_threadsafe(
@@ -302,7 +317,15 @@ class RemoteBackend(StorageBackendInterface):
         self.stats_monitor.update_interval_remote_time_to_get_sync((t2 - t1) * 1000)
         if memory_obj is None:
             return None
-        decompressed_memory_obj = self.deserializer.deserialize(memory_obj)
+        # Extract layer_id from LayerCacheEngineKey if present
+        layer_id = None
+        from lmcache.utils import LayerCacheEngineKey
+
+        if isinstance(key, LayerCacheEngineKey):
+            layer_id = key.layer_id
+        decompressed_memory_obj = self.deserializer.deserialize(
+            memory_obj, layer_id=layer_id
+        )
         t3 = time.perf_counter()
         logger.debug(
             f"Get takes {(t2 - t1) * 1000:.6f} msec, "
@@ -381,12 +404,18 @@ class RemoteBackend(StorageBackendInterface):
         t2 = time.perf_counter()
         self.stats_monitor.update_interval_remote_time_to_get_sync((t2 - t1) * 1000)
         decompressed_memory_objs: list[Optional[MemoryObj]] = []
-        for memory_obj in memory_objs:
+        for key, memory_obj in zip(keys, memory_objs):
             if memory_obj is None:
                 decompressed_memory_objs.append(None)
             else:
+                # Extract layer_id from LayerCacheEngineKey if present
+                layer_id = None
+                from lmcache.utils import LayerCacheEngineKey
+
+                if isinstance(key, LayerCacheEngineKey):
+                    layer_id = key.layer_id
                 decompressed_memory_objs.append(
-                    self.deserializer.deserialize(memory_obj)
+                    self.deserializer.deserialize(memory_obj, layer_id=layer_id)
                 )
 
         assert len(decompressed_memory_objs) == len(keys), (
@@ -455,19 +484,24 @@ class RemoteBackend(StorageBackendInterface):
                 "Connection is None in batched_get_non_blocking, returning empty list"
             )
             return []
-        try:
-            # warning, this timeout will not actually stop the
-            # scheduler from waiting for the result
-            return await asyncio.wait_for(
-                self.connection.batched_get_non_blocking(lookup_id, keys),
-                self.blocking_timeout_secs,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("batched_get_non_blocking timed out")
-            return []
-        except Exception as e:
-            logger.warning(f"Error occurred in batched_get_non_blocking: {e}")
-            return []
+        # Get compressed memory objects from connector
+        memory_objs = await self.connection.batched_get_non_blocking(lookup_id, keys)
+        # Deserialize them (convert from BytesBufferMemoryObj to TensorMemoryObj)
+        decompressed_memory_objs = []
+        for key, memory_obj in zip(keys, memory_objs):
+            if memory_obj is None:
+                decompressed_memory_objs.append(None)
+            else:
+                # Extract layer_id from LayerCacheEngineKey if present
+                layer_id = None
+                from lmcache.utils import LayerCacheEngineKey
+
+                if isinstance(key, LayerCacheEngineKey):
+                    layer_id = key.layer_id
+                decompressed_memory_objs.append(
+                    self.deserializer.deserialize(memory_obj, layer_id=layer_id)
+                )
+        return decompressed_memory_objs
 
     def pin(self, key: CacheEngineKey) -> bool:
         logger.debug(
